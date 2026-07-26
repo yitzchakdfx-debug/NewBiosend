@@ -135,6 +135,40 @@ DB stores full Min/Max always — visibility gating is visual only.
 
 ---
 
+## Default script and report conformance (Rev.1.1)
+
+`biosend_test.tst` is the **default** script (`main_window._DEFAULT_SCRIPT_NAME`,
+seeded via `paths._SEED_FILES`). It is the only sequence that satisfies the
+spec: CR mode, 5.76 Ω / 2.0 Ω, load off before the polarity check, monitored
+delays, `Critical` measurement steps, and the `Report` / `Quantity` /
+`Measurement` / `TimePoint` directives. `Automatic Power Supply Test.tst` was
+deleted — its name implied it was the official sequence while it ran 12.5 Ω,
+never selected CR, and produced non-conformant XML.
+
+Three consequences worth knowing:
+
+* **The CAMSTAR XML has no fallback.** `write_xml_report` raises
+  `XmlMappingMissingError` when a script declares no `Report` directives,
+  instead of silently emitting a flat document CAMSTAR rejects. Only
+  `biosend_test.tst` carries them today; every other `.tst` will raise. The
+  error names the script and lists the directives to add. `ReportWorker` reports
+  this on a dedicated `xml_failed` signal so a missing MES file is never
+  mistaken for a successful export — the PDF still archives.
+* **The PDF follows Appendix A §2.1.3.** `_appendix_a_sections` renders one
+  section per `Report` name — Result, Expected Value, Load Mode, and measured
+  values labelled t1/t2/t3 — ahead of the full step table. The static text lives
+  in the PDF template under `test_sections` so admins can edit it (§1.1.4.4
+  Note 2). Test order is pinned to the spec's 1-4; unknown tests follow.
+* **Every role gets measurements.** `write_pdf_report` no longer consults
+  `VIEW_MEASURED_DETAIL`; Appendix A requires measured values with no role
+  qualifier, and Operator/Technician lack that capability, so production PDFs
+  used to archive names and PASS/FAIL only. The capability still gates the live
+  UI table and trace log.
+
+Unbounded limits render blank rather than `nan`: steps the spec records but does
+not bound (Current, Power, Resistance) carry NaN bounds from the engine, and
+`_fmt_num` maps non-finite values to `""`.
+
 ## Polarity gate fails closed (spec §1.1.7.1)
 
 The polarity station gate is a **voltage readback**, not a boolean flag.
@@ -160,6 +194,33 @@ real measurement (`is_measurement=True`, unit `V`), so Appendix A §2.1.3.2 gets
 its *Measured Output Value* and Appendix B gets
 `<MeasuredOutput><Voltage><Value>`. `MockHardware` returns 24.0 V so mock runs
 exercise the same units and threshold.
+
+The engine row carries `report_test` / `report_quantity` — unlike the other
+fixture checks, Polarity Check is a *spec* test and must reach the XML. The
+script therefore has no `:Polarity Check` measurement step of its own; it used
+to, which produced a duplicate row with a laxer limit (`Limits 0 1000`, passing
+a dead unit) and two `<Test>` nodes where Appendix B expects one. The script
+keeps only `:Polarity Check Setup` (`loadoff` + `Delay 3000`).
+
+---
+
+## Continuous monitoring aborts on a lost instrument (§1.1.7.3)
+
+`Delay <ms> <lo> <hi>` polls the voltage every 300 ms for the whole wait. Two
+distinct failures end the run, and the trace log tells them apart:
+
+* `_MonitorOutOfRange` — the UUT left 22.8–25.2 V. The offending reading is
+  recorded as the step's measurement.
+* `_MonitorReadFailed` — the *instrument* stopped answering. Raised only after
+  `_io_with_resilience` has spent its full reconnect budget
+  (`_RECONNECT_BUDGET_S`, retrying and reopening the VISA resource), so it means
+  the link is genuinely down, not blipping.
+
+The read failure used to be swallowed (`except Exception: v = None`), which
+skipped the range check: pulling the instrument's cable two minutes into a
+burn-in left the remaining 28 minutes unmonitored while the run still passed.
+The spec requires monitoring for the entire duration, so an unmonitored
+remainder cannot be certified — the step now fails.
 
 ---
 

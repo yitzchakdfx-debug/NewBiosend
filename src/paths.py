@@ -54,7 +54,9 @@ def user_tmp_path(*parts: str) -> Path:
     return _install_root().joinpath("tmp", *parts)
 
 
-_SEED_FILES = ("limits.json", "sequence.tst", "demo_system.tst")
+# `biosend_test.tst` is the default script (see `_DEFAULT_SCRIPT_NAME`), so a
+# fresh install must have it on disk before the main window opens.
+_SEED_FILES = ("limits.json", "biosend_test.tst", "sequence.tst", "demo_system.tst")
 _seeded = False
 
 

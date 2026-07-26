@@ -67,7 +67,12 @@ from ui.widgets.result_row_delegate import ResultRowDelegate
 from version import __version__
 
 
-_DEFAULT_SCRIPT_NAME = "sequence.tst"
+# The spec Rev.1.1 sequence (§1.1.6-§1.1.7): CR mode, 5.76 ohm / 2.0 ohm, load
+# off before the polarity check, monitored delays, and the Report/Quantity
+# directives the CAMSTAR XML is built from. Previously this pointed at
+# `sequence.tst`, a 5 V demo unrelated to the spec, so an operator who did not
+# load a script explicitly ran the wrong test.
+_DEFAULT_SCRIPT_NAME = "biosend_test.tst"
 _NA = "-"
 
 
@@ -881,6 +886,9 @@ class MainWindow(QMainWindow):
         self._report_worker.failed.connect(
             lambda e: self.append_trace(f"Report generation failed: {e}")
         )
+        # The PDF archived but the CAMSTAR XML did not. Surfaced separately and
+        # prominently: the run looks complete, yet MES has nothing to ingest.
+        self._report_worker.xml_failed.connect(self._on_xml_report_failed)
         self._report_worker.finished.connect(self._report_worker.deleteLater)
         self._report_worker.finished.connect(lambda: setattr(self, "_report_worker", None))
         self._report_worker.start()
@@ -1544,6 +1552,22 @@ class MainWindow(QMainWindow):
         stamped = f"{datetime.now().strftime('[%H:%M:%S]')} {msg}"
         entry_type = "cmd" if msg.startswith("Executing:") else "info"
         self._record_trace(entry_type, stamped)
+
+    def _on_xml_report_failed(self, error: str) -> None:
+        """Report a CAMSTAR XML export failure without hiding it in the trace.
+
+        The PDF archived fine, so the run *looks* finished. A missing XML means
+        MES cannot ingest it, which is only discovered much later downstream —
+        hence the modal rather than a trace line alone.
+        """
+        self._record_trace("error", f"CAMSTAR XML report NOT written: {error}")
+        QMessageBox.warning(
+            self,
+            "CAMSTAR XML not generated",
+            "The PDF report was archived, but the CAMSTAR XML report was not "
+            "written.\n\nThis run cannot be imported into MES until the cause "
+            f"is fixed.\n\n{error}",
+        )
 
     def _start_parallel_run(
         self,

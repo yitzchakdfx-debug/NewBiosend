@@ -78,6 +78,28 @@ class _MonitorOutOfRange(Exception):
         )
 
 
+class _MonitorReadFailed(Exception):
+    """Raised when monitoring cannot read the voltage at all during a `Delay`.
+
+    Distinct from :class:`_MonitorOutOfRange`, which means the UUT misbehaved:
+    this means the *instrument* stopped answering. The driver has already spent
+    its reconnect budget by the time this is raised, so the link is genuinely
+    down rather than blipping.
+
+    Carries no value — there is no measurement — so the failing step reports a
+    blank reading, and the message names the underlying comms error to separate
+    "UUT out of spec" from "lost the load" in the trace log.
+    """
+
+    def __init__(self, cause: BaseException, elapsed_s: float) -> None:
+        self.cause = cause
+        self.elapsed_s = elapsed_s
+        super().__init__(
+            f"Voltage monitoring lost the instrument at {elapsed_s:.1f}s into "
+            f"delay (after reconnect attempts): {cause!s}"
+        )
+
+
 class TestRunnerThread(QThread):
     """Runs one script across one or more batch units, sequentially."""
 
@@ -587,7 +609,18 @@ class TestRunnerThread(QThread):
         }
         self._emit_result(unit, "Polarity Check", payload)
         record.results.append(
-            {"test_name": "Polarity Check", "loop": 1, **dict(payload)}
+            {
+                "test_name": "Polarity Check",
+                "loop": 1,
+                # Unlike the other engine fixture checks, this one is a *spec*
+                # test (Appendix A §2.1.3.2 / Appendix B), so it must reach the
+                # CAMSTAR XML. Carrying the report mapping here lets the script
+                # drop its own weaker `:Polarity Check` step, which duplicated
+                # this row with a laxer limit (>= 0 V vs the gate's floor).
+                "report_test": "Polarity Check",
+                "report_quantity": "Voltage",
+                **dict(payload),
+            }
         )
         if not passed:
             reason = (
@@ -767,6 +800,17 @@ class TestRunnerThread(QThread):
                     f"ERROR in {step.name}: command {cmd['cmd']!r} raised: {exc!s}",
                 )
                 return False, exc.value
+            except _MonitorReadFailed as exc:
+                # The instrument stopped answering mid-delay and did not come
+                # back within the driver's reconnect budget. There is no
+                # reading to report, but the step must still fail: the spec
+                # requires monitoring for the whole duration, and an unmonitored
+                # remainder cannot be certified as passing.
+                self._emit_log(
+                    "error",
+                    f"ERROR in {step.name}: monitoring aborted — {exc!s}",
+                )
+                return False, None
             except Exception as exc:
                 self._emit_log(
                     "error",
@@ -838,11 +882,23 @@ class TestRunnerThread(QThread):
                 elapsed_ms += chunk
                 self.progress_test.emit(min(99, int(elapsed_ms * 100 / total_ms)))
                 if monitor_min is not None and monitor_max is not None:
+                    # A read failure here has already survived the driver's
+                    # reconnect budget (`_io_with_resilience`: retry + reconnect
+                    # for _RECONNECT_BUDGET_S). Reaching this point therefore
+                    # means the instrument is genuinely gone, not blipping.
+                    # Fail the step: silently skipping the check would leave the
+                    # rest of a 30-minute burn-in unmonitored while the run
+                    # still passed, defeating spec §1.1.7.3's requirement that
+                    # monitoring run for the *entire* duration.
                     try:
                         v = self._hw_execute("measvoltage", [])
-                    except Exception:
-                        v = None
-                    if v is not None and not (monitor_min <= v <= monitor_max):
+                    except Exception as exc:
+                        raise _MonitorReadFailed(exc, elapsed_ms / 1000) from exc
+                    if v is None:
+                        raise _MonitorReadFailed(
+                            RuntimeError("no voltage returned"), elapsed_ms / 1000
+                        )
+                    if not (monitor_min <= v <= monitor_max):
                         raise _MonitorOutOfRange(
                             v, monitor_min, monitor_max, elapsed_ms / 1000
                         )

@@ -104,6 +104,31 @@ DEFAULT_PDF_TEMPLATE: dict[str, Any] = {
         ["Test Name", "test_name"],
         ["Result", "result"],
     ],
+    # Appendix A §2.1.3: per-test sections. Keyed by the `Report <name>` value a
+    # step declares in the .tst, which is also the Appendix B <TestName>. Each
+    # entry supplies the static text the spec prints above the measurements:
+    #   expected   -> "Expected Value:" line
+    #   load_mode  -> "Load Mode:" line (omitted when blank, e.g. Tests 1-2)
+    # Admin-editable, per spec §1.1.4.4 Note 2. A test with no entry here still
+    # renders its measurements, just without the two static lines.
+    "test_sections": {
+        "LED Indication Test": {
+            "expected": "Green LED ON and Steady",
+            "load_mode": "",
+        },
+        "Polarity Check": {
+            "expected": "Positive (+24VDC)",
+            "load_mode": "",
+        },
+        "Low Load Stability Test": {
+            "expected": "24VDC ±5%",
+            "load_mode": "Constant Resistance (CR)",
+        },
+        "Burn-In / Continuous Load Test": {
+            "expected": "24VDC ±5%",
+            "load_mode": "Constant Resistance (CR)",
+        },
+    },
 }
 
 #: Per-row value fields a PDF results column may reference.
@@ -251,6 +276,27 @@ def validate_pdf_template(text: str) -> None:
                     f"Unknown column field {entry[1]!r}.\nAvailable: "
                     + ", ".join(sorted(COLUMN_FIELDS))
                 )
+
+    sections = loaded.get("test_sections")
+    if sections is not None:
+        # Free-form keys (they match whatever `Report <name>` a script declares,
+        # so new products need no code change), but the shape must hold or the
+        # Appendix A renderer would fail mid-report.
+        if not isinstance(sections, dict):
+            raise TemplateError(
+                "'test_sections' must be an object keyed by test name."
+            )
+        for name, cfg in sections.items():
+            if not isinstance(cfg, dict):
+                raise TemplateError(
+                    f"'test_sections[{name!r}]' must be an object with "
+                    "'expected' and/or 'load_mode' text."
+                )
+            for field in ("expected", "load_mode"):
+                if field in cfg and not isinstance(cfg[field], str):
+                    raise TemplateError(
+                        f"'test_sections[{name!r}].{field}' must be text."
+                    )
 
 
 def placeholder_names() -> set[str]:

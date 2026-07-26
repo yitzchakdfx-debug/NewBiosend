@@ -31,23 +31,25 @@ PromptYesNo Is the Green LED on the UUT panel ON and STEADY?
 # Pass criteria (Rev 1.1): output voltage polarity is positive (+24 VDC).
 # The ±10% window from Rev 1.0 was REMOVED — this is a wiring check, not an
 # accuracy check. Voltage accuracy is verified by Tests 3 and 4 at ±5%.
-# The upper Limit is left wide open so only the sign decides pass/fail.
-# Waits 3 seconds for voltage to stabilise before measuring.
+#
+# The measurement itself is performed by the ENGINE, not by this script:
+# `TestRunnerThread._check_polarity` runs before the scripted flow, reads the
+# voltage, and requires it to be positive AND above a noise floor (10% of the
+# input target) so a dead UUT reading 0.00 V cannot pass. It emits the
+# "Polarity Check" row for both the PDF and the CAMSTAR XML.
+#
+# This script therefore only prepares the condition the spec demands — load
+# OFF, then 3 seconds to settle. A scripted `:Polarity Check` measurement step
+# used to live here too; it produced a SECOND, duplicate row with a laxer limit
+# (>= 0 V, which passes a dead unit) and Appendix B expects exactly one <Test>
+# named "Polarity Check". Do not re-add it.
 # ─────────────────────────────────────────────────────────
 
 :Polarity Check Setup
 Hidden
 Critical
 loadoff
-
-:Polarity Check
-Critical
-Limits 0 1000
-Unit V
-Report Polarity Check
-Quantity Voltage
 Delay 3000
-measvoltage
 
 # ─────────────────────────────────────────────────────────
 # TEST 3 – Low Load Stability Test – 100W

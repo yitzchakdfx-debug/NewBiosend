@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import csv
 import io
+import math
 import re
-import xml.etree.ElementTree as ET
 from datetime import datetime
 from html import escape
 from pathlib import Path
 from typing import Any
-from xml.dom import minidom
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
@@ -26,7 +25,6 @@ from reportlab.platypus import (
 )
 from reportlab.platypus.tables import LongTable
 
-from config import TESTER_SERIAL_NUMBER
 from logic.report_templates import (
     COLUMN_FIELDS,
     DEFAULT_PDF_TEMPLATE,
@@ -41,7 +39,6 @@ from logic.report_xml import (
 )
 from logic.roles import Capability, can
 from paths import user_data_path
-from version import __version__
 
 class ReportsForbiddenError(PermissionError):
     """Raised when a role that may not produce reports asks for one."""
@@ -168,9 +165,16 @@ def _fmt_num(v: Any) -> str:
     if v is None:
         return ""
     try:
-        return f"{float(v):g}"
+        f = float(v)
     except (TypeError, ValueError):
         return str(v)
+    # A step with no `Limits` carries NaN bounds (see `test_engine`), which is
+    # correct for steps the spec records but does not bound — Current, Power and
+    # Resistance. Render those as blank: printing the literal "nan" in a
+    # customer-facing Min/Max column reads as a software defect.
+    if not math.isfinite(f):
+        return ""
+    return f"{f:g}"
 
 
 def _header_rows(run_meta: dict[str, Any], role: str) -> list[tuple[str, str]]:
@@ -236,6 +240,155 @@ def _row_cells(
     return cells
 
 
+#: Quantities printed on an Appendix A measurement line, in spec order.
+_APPENDIX_A_QUANTITIES = (
+    ("Voltage", "V"),
+    ("Current", "A"),
+    ("Power", "W"),
+    ("Resistance", "Ω"),
+)
+
+
+def _grouped_by_report_test(
+    results: list[dict[str, Any]],
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    """Group rows by their `Report <name>`, preserving first-seen order.
+
+    Rows with no `report_test` (station fixtures such as Input Connection Check)
+    are left out — Appendix A lists UUT tests only.
+    """
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in results:
+        name = str(row.get("report_test", "")).strip()
+        if name:
+            grouped.setdefault(name, []).append(row)
+
+    # Appendix A numbers the tests 1-4 in a fixed order. Script order differs:
+    # the engine's polarity gate runs before the scripted LED prompt, so
+    # first-seen order would print Polarity as "Test 1". Known tests are pinned
+    # to the spec order; anything else keeps first-seen order after them, so a
+    # non-spec product still renders.
+    spec_order = list(DEFAULT_PDF_TEMPLATE.get("test_sections", {}))
+    return sorted(
+        grouped.items(),
+        key=lambda kv: (
+            spec_order.index(kv[0]) if kv[0] in spec_order else len(spec_order),
+        ),
+    )
+
+
+def _measurement_lines(rows: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """`(label, text)` measurement lines for one Appendix A test section.
+
+    Multi-point tests (Burn-In) are keyed by `report_index` and labelled
+    t1/t2/t3; single-point tests get one unlabelled line. Quantities come from
+    `report_quantity`, so the order follows the spec rather than script order.
+    """
+    by_index: dict[int, list[dict[str, Any]]] = {}
+    for row in rows:
+        try:
+            idx = int(row.get("report_index") or 0)
+        except (TypeError, ValueError):
+            idx = 0
+        by_index.setdefault(idx, []).append(row)
+
+    multi = sorted(i for i in by_index if i > 0)
+    ordered = [(i, by_index[i]) for i in multi] or [(0, by_index.get(0, []))]
+
+    lines: list[tuple[str, str]] = []
+    for position, (idx, group) in enumerate(ordered, start=1):
+        by_quantity = {
+            str(r.get("report_quantity", "")).strip(): r
+            for r in group
+            if str(r.get("report_quantity", "")).strip()
+        }
+        parts: list[str] = []
+        for quantity, uom in _APPENDIX_A_QUANTITIES:
+            row = by_quantity.get(quantity)
+            if row is None:
+                continue
+            shown = "N/A" if row.get("skipped") else _fmt_num(row.get("value"))
+            parts.append(f"{quantity} {shown or '—'} [{uom}]")
+        if not parts:
+            continue
+        label = ""
+        if multi:
+            label = f"t{position}"
+            time_val = str(group[0].get("report_time", "")).strip()
+            if time_val:
+                uom = str(group[0].get("report_time_uom", "")).strip() or "min"
+                label = f"{label} ({time_val} {uom})"
+        lines.append((label, "   ".join(parts)))
+    return lines
+
+
+def _appendix_a_sections(
+    results: list[dict[str, Any]],
+    template: dict[str, Any],
+    styles: Any,
+) -> list[Any]:
+    """Per-test Appendix A §2.1.3 sections, or [] if the script has no mapping.
+
+    Returning [] lets the caller fall back to the flat results table, so
+    non-spec products (SPREOS, 12VDC RF, …) still get a report.
+    """
+    grouped = _grouped_by_report_test(results)
+    if not grouped:
+        return []
+
+    sections_cfg = template.get("test_sections") or {}
+    flow: list[Any] = []
+    for number, (test_name, rows) in enumerate(grouped, start=1):
+        cfg = sections_cfg.get(test_name) or {}
+        # A test counts as skipped only when nothing in it ran; a partially-run
+        # test that failed must read FAIL, not N/A (spec §1.1.4.5).
+        if all(r.get("skipped") for r in rows):
+            verdict = "N/A"
+        elif all(r.get("passed") for r in rows if not r.get("skipped")):
+            verdict = "Pass"
+        else:
+            verdict = "Fail"
+
+        flow.append(Spacer(1, 0.16 * inch))
+        flow.append(
+            Paragraph(
+                f"<b>Test {number}: {escape(test_name)}</b>", styles["Heading3"]
+            )
+        )
+        colour = "#b91c1c" if verdict == "Fail" else "#000000"
+        flow.append(
+            Paragraph(
+                f'Result [Pass / Fail]: <font color="{colour}"><b>{verdict}</b></font>',
+                styles["Normal"],
+            )
+        )
+        expected = str(cfg.get("expected", "")).strip()
+        if expected:
+            flow.append(
+                Paragraph(f"Expected Value: {escape(expected)}", styles["Normal"])
+            )
+        load_mode = str(cfg.get("load_mode", "")).strip()
+        if load_mode:
+            flow.append(Paragraph(f"Load Mode: {escape(load_mode)}", styles["Normal"]))
+
+        lines = _measurement_lines(rows)
+        if lines:
+            flow.append(
+                Paragraph(
+                    "Measured Output Value"
+                    + ("s" if len(lines) > 1 else "")
+                    + ":",
+                    styles["Normal"],
+                )
+            )
+            for label, text in lines:
+                prefix = f"<b>{escape(label)}:</b> " if label else ""
+                flow.append(
+                    Paragraph(f"&nbsp;&nbsp;&nbsp;{prefix}{escape(text)}", styles["Normal"])
+                )
+    return flow
+
+
 def _write_csv(
     path: Path,
     run_meta: dict[str, Any],
@@ -277,7 +430,14 @@ def write_pdf_report(
     role: str,
 ) -> None:
     """Build paginated PDF (SimpleDocTemplate + LongTable for results splits across pages)."""
-    show_detail = can(role, Capability.VIEW_MEASURED_DETAIL)
+    # Appendix A §2.1.3.2-2.1.3.4 require the Measured Output Value on Tests
+    # 2/3/4 with no role qualifier, so the archived report always carries the
+    # numbers. This used to follow `Capability.VIEW_MEASURED_DETAIL`, which
+    # Operator and Technician lack — meaning a normal production run archived a
+    # PDF containing only test names and PASS/FAIL, with no measurements at all.
+    # The capability still gates the live results table and trace log in the UI;
+    # what the permanent record must contain is a separate question.
+    show_detail = True
     template = read_pdf_template()
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -329,6 +489,17 @@ def write_pdf_report(
     )
     flow.append(ht)
     flow.append(Spacer(1, 0.25 * inch))
+
+    # Appendix A §2.1.3: per-test sections with Result / Expected Value / Load
+    # Mode / measured values. Present only for scripts that declare `Report`
+    # directives; other products fall through to the flat table alone.
+    sections = _appendix_a_sections(results, template, styles)
+    if sections:
+        flow.append(Paragraph("<b>Tests</b>", styles["Heading2"]))
+        flow.extend(sections)
+        flow.append(Spacer(1, 0.28 * inch))
+        flow.append(Paragraph("<b>All Recorded Steps</b>", styles["Heading2"]))
+        flow.append(Spacer(1, 0.1 * inch))
 
     key = "detail_columns" if show_detail else "summary_columns"
     columns = _column_pairs(template, key)
@@ -406,67 +577,36 @@ def write_pdf_report(
     buffer.close()
 
 
-def write_xml_report(path: Path, run_meta: dict[str, Any], results: list[dict[str, Any]]) -> None:
-    """Write the XML test report alongside the PDF.
+class XmlMappingMissingError(RuntimeError):
+    """Raised when a script cannot produce the Appendix B XML structure.
 
-    Scripts whose steps carry `Report` directives produce the nested CAMSTAR
-    structure of spec Rev.1.1 Appendix B. Scripts without them — including
-    every version archived before those directives existed — keep producing the
-    older flat document, so no migration of `test_versions` is required.
+    The nested CAMSTAR document is built from the `Report` / `Quantity`
+    directives on a script's steps. Without them there is nothing to map rows
+    onto `<Test>` / `<MeasuredOutput>` nodes.
+
+    This used to fall back to a flat one-node-per-row document. That document
+    is not what CAMSTAR ingests — `<Name>` instead of `<TestName>`, no
+    `<TestLoad>`, no `<Measurement1..3>` — so the fallback produced a file that
+    looked like a successful export and was rejected downstream. Failing loudly
+    is the point: a missing mapping is a script defect, not a format choice.
     """
-    if has_report_mapping(results):
-        path.write_text(tree_to_text(build_camstar_tree(run_meta, results)), encoding="utf-8")
-        return
-    _write_flat_xml_report(path, run_meta, results)
 
 
-def _write_flat_xml_report(
-    path: Path, run_meta: dict[str, Any], results: list[dict[str, Any]]
-) -> None:
-    """Legacy one-node-per-row XML, used when no step declares a mapping."""
-    root = ET.Element("TestReport")
+def write_xml_report(path: Path, run_meta: dict[str, Any], results: list[dict[str, Any]]) -> None:
+    """Write the CAMSTAR XML test report (spec Rev.1.1 Appendix B).
 
-    ET.SubElement(root, "ReportName").text = (
-        "Power Supply EM-5406-00F / EM-5406-00 Load Test Report"
-    )
-    ET.SubElement(root, "Revision").text = "TI-5406-00"
+    Raises `XmlMappingMissingError` if the script carries no `Report`
+    directives, rather than emitting a non-conformant document.
+    """
+    if not has_report_mapping(results):
+        script = str(run_meta.get("test_program_name") or "this script").strip()
+        raise XmlMappingMissingError(
+            f"Cannot write the CAMSTAR XML report: {script} declares no "
+            "'Report' directives, so its results cannot be mapped onto the "
+            "Appendix B structure. Add 'Report <TestName>' (and 'Quantity "
+            "Voltage|Current|Power|Resistance' on measurement steps, plus "
+            "'Measurement <n>' / 'TimePoint <n> min' for multi-point tests) to "
+            "the script's steps. The PDF report is unaffected."
+        )
+    path.write_text(tree_to_text(build_camstar_tree(run_meta, results)), encoding="utf-8")
 
-    info = ET.SubElement(root, "Information")
-    ET.SubElement(info, "ProductName").text = str(run_meta.get("uut_type", ""))
-    ET.SubElement(info, "OperatorName").text = str(run_meta.get("tester_name", ""))
-    ET.SubElement(info, "SerialNumber").text = str(run_meta.get("serial_number", ""))
-    ET.SubElement(info, "PartNumber").text = str(run_meta.get("part_number", ""))
-    ET.SubElement(info, "TestDateTime").text = str(run_meta.get("start_time", ""))
-    load_sn = str(run_meta.get("load_serial_number", ""))
-    load_ch = str(run_meta.get("load_channel", ""))
-    ET.SubElement(info, "TestLoadChannelID").text = (
-        f"{load_ch} / {load_sn}" if load_ch and load_sn else load_ch or load_sn
-    )
-    ET.SubElement(info, "TesterSerial").text = TESTER_SERIAL_NUMBER
-    ET.SubElement(info, "SoftwareVersion").text = __version__
-
-    ET.SubElement(root, "OverallResult").text = str(run_meta.get("overall_result", "FAIL"))
-
-    tests_el = ET.SubElement(root, "Tests")
-    for idx, row in enumerate(results, start=1):
-        test_el = ET.SubElement(tests_el, "Test")
-        test_el.set("id", str(idx))
-        ET.SubElement(test_el, "Name").text = str(row.get("test_name", ""))
-        ET.SubElement(test_el, "Result").text = "Pass" if row.get("passed") else "Fail"
-        if row.get("min") is not None:
-            ET.SubElement(test_el, "Min").text = _fmt_num(row["min"])
-        if row.get("max") is not None:
-            ET.SubElement(test_el, "Max").text = _fmt_num(row["max"])
-        if row.get("value") is not None:
-            val_el = ET.SubElement(test_el, "MeasuredValue")
-            val_el.text = _fmt_num(row["value"])
-            if row.get("unit"):
-                val_el.set("unit", str(row["unit"]))
-
-    raw = ET.tostring(root, encoding="unicode", xml_declaration=False)
-    pretty = minidom.parseString(raw).toprettyxml(indent="  ", encoding=None)
-    # toprettyxml inserts its own declaration; replace with a UTF-8 one
-    lines = pretty.splitlines()
-    if lines and lines[0].startswith("<?xml"):
-        lines[0] = '<?xml version="1.0" encoding="UTF-8"?>'
-    path.write_text("\n".join(lines), encoding="utf-8")
