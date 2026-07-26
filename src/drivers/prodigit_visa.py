@@ -100,9 +100,16 @@ class ProdigitVisaDriver(BaseDriver):
         *,
         timeout_ms: float | None = None,
         probe_identity: bool = True,
+        reconnect_on_error: bool = True,
     ) -> None:
         self._ctx: _VISAContext | None = None
         self._reconnecting = False
+        # The pre-test channel scan reads every slot expecting most to be empty,
+        # so a failed read is the normal case rather than a fault. Retrying and
+        # reopening the resource for each one costs the reconnect budget per
+        # empty slot — seconds of dead time — and the reopen can disturb the
+        # channel that does have a UUT. Test runs keep the resilience.
+        self._reconnect_on_error = reconnect_on_error
         self._active_slot = 1
         self._load_serial = ""
         self._timeout_ms = (
@@ -330,6 +337,8 @@ class ProdigitVisaDriver(BaseDriver):
         tries, for up to ``_RECONNECT_BUDGET_S``. If it still fails after that,
         the last error propagates so the run aborts as it did before.
         """
+        if not self._reconnect_on_error:
+            return op()  # scan mode: a failed read is expected, fail it fast
         deadline = time.monotonic() + _RECONNECT_BUDGET_S
         while True:
             try:

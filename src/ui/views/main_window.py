@@ -1626,15 +1626,21 @@ class MainWindow(QMainWindow):
         stop_on_fail: bool,
         tests_to_run: list[str],
     ) -> None:
-        from drivers.mock_hardware import MockHardware
-
         shared_driver = create_driver()
         try:
             shared_driver.connect()
         except HardwareError as exc:
-            self.append_trace(f"Hardware error: {exc} — falling back to demo mode.")
-            shared_driver = MockHardware()
-            shared_driver.connect()
+            # No silent demo-mode fallback: substituting MockHardware here would
+            # report a healthy 24 V on every channel and archive the result as a
+            # real production run. Abort and tell the operator instead.
+            self._record_trace("error", f"Hardware connection failed: {exc}")
+            QMessageBox.critical(
+                self,
+                "Instrument not connected",
+                f"Could not connect to the electronic load:\n\n{exc}\n\n"
+                "Check the cable and power, then start the run again.",
+            )
+            return
         hw_lock = threading.Lock()
         self._parallel_shared_driver = shared_driver
 

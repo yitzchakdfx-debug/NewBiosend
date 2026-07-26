@@ -13,6 +13,7 @@ Target-unique features preserved:
 
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from pathlib import Path
 from threading import Event, Lock
@@ -58,6 +59,14 @@ _POLARITY_FLOOR_FRACTION = 0.1
 # it is a wiring check — so this is only a display ceiling for the report's
 # "max" column, matching the `Limits 0 1000` convention the .tst scripts use.
 _POLARITY_MAX_REPORTED_V = 1000.0
+
+# How long a run start keeps retrying `connect()` before aborting. Covers an
+# operator plugging the instrument's cable back in, without leaving the UI stuck
+# when the instrument is genuinely absent.
+_CONNECT_RETRY_BUDGET_S = 8.0
+# Pause between connect attempts. The load needs a moment after its link comes
+# back, so a tight loop would only produce more failures.
+_CONNECT_RETRY_DELAY_S = 1.0
 
 
 class _MonitorOutOfRange(Exception):
@@ -252,13 +261,11 @@ class TestRunnerThread(QThread):
                         self._emit_log("error", "Hardware connect() returned False; aborting.")
                         return
                 except HardwareError as exc:
-                    self._emit_log("error", f"Hardware connection failed: {exc}")
-                    from drivers.mock_hardware import MockHardware
-                    if not isinstance(self._hw, MockHardware):
-                        self._emit_log("info", "⚠ Falling back to demo mode (MockHardware).")
-                        self._hw = MockHardware()
-                        self._hw.connect()
-                    else:
+                    # Retry before giving up: an unplugged/late-plugged LAN cable
+                    # is the common case, and the instrument needs a moment
+                    # after the link comes back. Bounded so a genuinely absent
+                    # instrument fails fast instead of hanging the operator.
+                    if not self._retry_connect(exc):
                         return
 
             try:
@@ -863,6 +870,50 @@ class TestRunnerThread(QThread):
             return last_measurement > 0.5, last_measurement
 
         return True, last_measurement
+
+    def _retry_connect(self, first_error: Exception) -> bool:
+        """Retry `connect()` for a bounded time. True once connected.
+
+        A dropped or late-plugged LAN cable is the usual reason a run cannot
+        start, and the load needs a moment after the link returns. Retrying here
+        means the operator plugs the cable back in and presses Start again
+        successfully, instead of the app being stuck.
+
+        This deliberately does **not** fall back to `MockHardware`. That is what
+        it used to do, and it was the reason reconnecting the cable never helped:
+        the real driver was replaced by a simulator for the rest of the session,
+        so every later read came from the mock — reporting a healthy 24 V on
+        every channel, whether or not a UUT was attached. Demo mode is a
+        deliberate choice via `HARDWARE_BACKEND=mock`, never an automatic
+        consolation prize during a production run.
+        """
+        deadline = time.monotonic() + _CONNECT_RETRY_BUDGET_S
+        attempt = 0
+        last = first_error
+        self._emit_log(
+            "error",
+            f"Hardware connection failed: {last}. Retrying for up to "
+            f"{_CONNECT_RETRY_BUDGET_S:g}s — check the instrument's cable and power.",
+        )
+        while time.monotonic() < deadline and not self._stop_requested:
+            attempt += 1
+            time.sleep(_CONNECT_RETRY_DELAY_S)
+            try:
+                if self._hw.connect():
+                    self._emit_log(
+                        "info", f"Hardware connected on retry {attempt}."
+                    )
+                    return True
+            except Exception as exc:
+                last = exc
+        self._emit_log(
+            "error",
+            f"Could not connect to the instrument after "
+            f"{_CONNECT_RETRY_BUDGET_S:g}s ({attempt} attempts): {last}. "
+            "Aborting the run — no test data is produced. Check the cable, "
+            "power and PRODIGIT_VISA_RESOURCE, then start again.",
+        )
+        return False
 
     def _force_load_off(self, unit: BatchUnit | None = None) -> bool:
         """Command the electronic load off, whatever else happened. Returns success.

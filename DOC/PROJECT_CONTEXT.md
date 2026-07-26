@@ -204,6 +204,49 @@ keeps only `:Polarity Check Setup` (`loadoff` + `Delay 3000`).
 
 ---
 
+## No silent demo-mode fallback
+
+A failed `connect()` used to swap the driver for `MockHardware` and carry on.
+That is why reconnecting the instrument's cable never helped: the real driver
+was gone for the rest of the session, so every later read came from a simulator
+that answers a healthy 24 V for **every** slot — and the run still archived as
+production data.
+
+Now:
+
+* `TestRunnerThread._retry_connect` retries `connect()` for
+  `_CONNECT_RETRY_BUDGET_S` (8 s, 1 s apart), which covers an operator plugging
+  the cable back in, then aborts the run with an explanation. Verified: recovers
+  in ~3 s when the link returns, gives up in ~8 s when the instrument is absent.
+* The parallel-run path raises a modal instead of substituting a mock.
+* The pre-test scan reports "nothing detected" rather than mock-detecting all
+  four channels.
+
+Demo mode remains available deliberately via `HARDWARE_BACKEND=mock`. It is
+never an automatic consolation prize during a production run. (`monitor_engine`
+still mocks freely — it is the decorative live readout, not a verdict path.)
+
+## Pre-test channel scan: fast and honest
+
+Two independent problems, both fixed in `_ScanThread.run`:
+
+* **Speed.** The scan reads every slot expecting most to be empty, so a failed
+  read is the normal case, not a fault. It inherited
+  `_io_with_resilience`, spending the reconnect budget *per empty slot* — up to
+  20 s for one UUT among four channels — and each resource reopen could disturb
+  the channel that did have a UUT. `create_driver(reconnect_on_error=False)`
+  now disables retry for the scan only; test runs keep full resilience.
+  Measured: 5.01 s → instant per empty channel, ~15 s saved per scan.
+* **False positives.** `activate_slot` fires `CHAN <n>` and cannot verify it
+  took effect, so a mainframe that ignores a selection for an absent module
+  keeps answering with the previously selected channel — one UUT appears on two
+  channels. Slots whose readings match within `_SLOT_ECHO_TOLERANCE_V` (0.02 V)
+  are treated as that echo and collapsed to the first; genuinely different
+  supplies differ by more, an echo is bit-identical.
+
+Detection stays advisory: the operator can still tick an undetected channel
+(spec §1.1.5.3 asks for exclusion, and this remains a deliberate deviation).
+
 ## The load is always commanded off (safety)
 
 A UUT must never be left dissipating test power. Four layers, because each one

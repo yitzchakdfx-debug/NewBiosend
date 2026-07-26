@@ -19,6 +19,12 @@ from PySide6.QtWidgets import (
 from config import LOAD_SERIALS, UUT_TYPES
 from logic.models import BatchUnit
 
+# Two slots reading within this many volts of each other during the scan are
+# treated as the same physical UUT seen twice (a stale `CHAN` selection echo)
+# rather than two independently-connected units. Real supplies differ by more
+# than this; an echo is bit-identical.
+_SLOT_ECHO_TOLERANCE_V = 0.02
+
 
 class _ScanThread(QThread):
     """Reads input voltage on every load slot and emits the active slot list."""
@@ -33,7 +39,6 @@ class _ScanThread(QThread):
     def run(self) -> None:
         from config import PRODIGIT_SCAN_TIMEOUT_MS
         from drivers.factory import create_driver
-        from drivers.mock_hardware import MockHardware
 
         target = self._target_v
         tol = self._tol_pct
@@ -48,35 +53,63 @@ class _ScanThread(QThread):
         except (TypeError, ValueError):
             scan_timeout = 1500.0
 
-        driver = create_driver(timeout_ms=scan_timeout, probe_identity=False)
+        # `reconnect_on_error=False`: most slots are expected to be empty, so a
+        # failed read is normal here, not a fault. With the retry budget on, each
+        # empty slot cost its read timeout *plus* seconds of reconnect attempts,
+        # and every reopen could disturb the channel that did have a UUT.
+        driver = create_driver(
+            timeout_ms=scan_timeout,
+            probe_identity=False,
+            reconnect_on_error=False,
+        )
         try:
             driver.connect()
         except Exception:
-            try:
-                driver = MockHardware()
-                driver.connect()
-            except Exception:
-                self.scan_done.emit([])
-                return
+            # Do not fall back to MockHardware: it answers 24 V for every slot,
+            # so a scan with no instrument reported all channels populated —
+            # exactly the false positive this scan exists to prevent. Report
+            # "nothing detected" and let the operator tick channels knowingly.
+            self.scan_done.emit([])
+            return
 
         active: list[int] = []
+        readings: list[tuple[int, float | None]] = []
         for idx, load_serial in enumerate(LOAD_SERIALS):
             slot = idx + 1
             try:
                 if hasattr(driver, "activate_slot"):
                     driver.activate_slot(slot, load_serial_number=load_serial)  # type: ignore[attr-defined]
                 v = driver.execute_command("readinput", [str(slot)])
-                if min_v <= v <= max_v:
-                    active.append(slot)
             except Exception:
-                pass
+                readings.append((slot, None))
+                continue
+            readings.append((slot, v))
+            if min_v <= v <= max_v:
+                active.append(slot)
+
+        # Guard against a stale slot echo. `activate_slot` fires `CHAN <n>` and
+        # cannot verify it took effect, so a mainframe that ignores a selection
+        # for an absent module keeps answering with the previously selected
+        # channel — one UUT then appears on two channels. Identical non-zero
+        # readings across slots are that signature, not two matched units, so
+        # keep only the first and let the operator add others deliberately.
+        deduped: list[int] = []
+        seen: list[float] = []
+        for slot in active:
+            v = next((val for s, val in readings if s == slot and val is not None), None)
+            if v is None:
+                continue
+            if any(abs(v - prev) < _SLOT_ECHO_TOLERANCE_V for prev in seen):
+                continue  # same voltage as an earlier slot → almost certainly an echo
+            seen.append(v)
+            deduped.append(slot)
 
         try:
             driver.disconnect()
         except Exception:
             pass
 
-        self.scan_done.emit(active)
+        self.scan_done.emit(deduped)
 
 
 class BatchPreTestDialog(QDialog):
