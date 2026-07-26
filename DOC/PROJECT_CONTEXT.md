@@ -223,8 +223,23 @@ Now:
   four channels.
 
 Demo mode remains available deliberately via `HARDWARE_BACKEND=mock`. It is
-never an automatic consolation prize during a production run. (`monitor_engine`
-still mocks freely — it is the decorative live readout, not a verdict path.)
+never an automatic consolation prize during a production run.
+
+`monitor_engine` had the same fallback and it mattered more than it looked: the
+live monitor owns the hardware on the main screen, so unplugging the instrument
+turned it into a simulator **permanently** — `_connect_driver` ran only at thread
+start and on `resume()`, and `_read_values` swallowed every error and returned
+`0.0, 0.0` forever. Replugging the cable could not recover, and neither could
+leaving and re-entering the screen. Now the monitor connection is self-healing:
+
+* no MockHardware fallback — a failed connect leaves the driver `None`,
+* a failed read discards the driver instead of polling a dead handle,
+* `run()` reconnects every `_MONITOR_RECONNECT_INTERVAL_MS` (3 s) while
+  disconnected, throttled so a failing attempt's timeout cannot stall the loop,
+* `connection_restored` reports recovery in the trace pane.
+
+Test runs were never affected in the same way: each run builds a fresh driver via
+`create_driver()`, and `_io_with_resilience` retries per I/O call.
 
 ## Pre-test channel scan: fast and honest
 

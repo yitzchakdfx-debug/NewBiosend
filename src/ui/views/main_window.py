@@ -130,6 +130,12 @@ class MainWindow(QMainWindow):
         if SHOW_LIVE_MONITOR:
             self.monitor_thread = MonitorThread(parent=self, simulate=(HARDWARE_BACKEND == "mock"))
             self.monitor_thread.values_updated.connect(self.instrument_panel.update_values)
+            # The monitor reconnects by itself while disconnected; say so when it
+            # succeeds, so an operator who replugged a cable knows the station is
+            # live again instead of guessing from the readout.
+            self.monitor_thread.connection_restored.connect(
+                lambda: self.append_trace("Instrument connection restored.")
+            )
             self.monitor_thread.start()
         self._apply_theme_file()
         self._update_icons(self.is_dark_mode)
