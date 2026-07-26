@@ -1,0 +1,58 @@
+# Planning / working documents (not for version control)
+*PLAN*.md
+*_PLAN_*
+
+# PyInstaller build output
+build/
+dist/
+*.rar
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.venv/
+venv/
+ENV/
+env/
+.env
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Database and Locks
+*.db
+*.db.bak-*
+*.lock
+app.lock
+
+# App Logs and Temporary Files
+*.log
+logs/
+temp/
+tmp/
+
+# Encrypted audit/secure logs — production traceability records, never publish
+*.dat
+
+# Editor / manual backup copies
+*.bak
+*.bak-*/
+
+# Test Results and Exports
+src/data/results/
+*.csv
+*.json
+*.txt
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Icons and Assets (Exclude specific local icons if needed)
+# src/ui/assets/icons/BirdAppIcon.png

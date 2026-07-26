@@ -1,0 +1,100 @@
+/* ========================================================
+   DFX ATE - Navy Mint Login Screen
+   ======================================================== */
+
+QDialog#login_dialog {
+    background: qlineargradient(
+        x1: 0, y1: 0,
+        x2: 1, y2: 1,
+        stop: 0 #EEF6F4,
+        stop: 1 #F7FBFA
+    );
+}
+
+/* The centered white card */
+QFrame#login_card {
+    background-color: #FFFFFF;
+    border: 1px solid #D7E7E4;
+    border-radius: 18px;
+}
+
+/* Main title */
+QLabel#login_title {
+    color: #102A43;
+    font-size: 24pt;
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-weight: 800;
+}
+
+/* Username / Password labels */
+QLabel#login_label {
+    color: #0F766E;
+    font-size: 10pt;
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-weight: 700;
+}
+
+/* Input fields */
+QLineEdit#login_input {
+    background-color: #FFFFFF;
+    color: #0F172A;
+
+    border: 1px solid #BFD8D2;
+    border-radius: 9px;
+
+    padding-left: 14px;
+    padding-right: 38px;
+    padding-top: 9px;
+    padding-bottom: 9px;
+
+    font-size: 11pt;
+    font-family: "Segoe UI", Arial, sans-serif;
+
+    selection-background-color: #0F766E;
+    selection-color: #FFFFFF;
+}
+
+QLineEdit#login_input:hover {
+    border: 1px solid #8FBDB5;
+}
+
+QLineEdit#login_input:focus {
+    background-color: #FFFFFF;
+    border: 2px solid #0F766E;
+}
+
+/* Login button */
+QPushButton#login_button {
+    background-color: #0F766E;
+    color: #FFFFFF;
+
+    font-size: 12pt;
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-weight: 700;
+
+    border: none;
+    border-radius: 10px;
+
+    padding: 12px;
+}
+
+QPushButton#login_button:hover {
+    background-color: #115E59;
+}
+
+QPushButton#login_button:pressed {
+    background-color: #134E4A;
+}
+
+QPushButton#login_button:disabled {
+    background-color: #A7C9C4;
+    color: #EEF6F4;
+}
+
+/* Error message */
+QLabel#login_error {
+    color: #DC2626;
+    font-size: 10pt;
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-weight: 600;
+}

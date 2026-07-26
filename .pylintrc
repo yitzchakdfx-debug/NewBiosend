@@ -1,0 +1,4 @@
+[MAIN]
+# PySide6 ships C-extension modules; pylint must import them to see names like
+# QApplication, QThread, Signal, etc. (avoids no-name-in-module false positives).
+extension-pkg-allow-list=PySide6.QtCore,PySide6.QtWidgets,PySide6.QtGui

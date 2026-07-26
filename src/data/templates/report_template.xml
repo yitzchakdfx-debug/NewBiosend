@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  CAMSTAR test-report template.
+
+  {{placeholders}} are replaced with run values. Available names:
+    uut_type, tester_name, employee_id, serial_number, part_number,
+    start_time, end_time, overall_result, test_program_name,
+    load_channel_id, test_load_model, tester_serial, software_version
+
+  The empty <Tests/> element is replaced by the generated test results. Keep it
+  exactly once, and do not put anything inside it.
+
+  Elements and attributes may be added, removed, renamed or reordered. Anything
+  that is not a placeholder is copied through verbatim.
+-->
+<TestReport>
+    <Information>
+        <ProductName>{{uut_type}}</ProductName>
+        <OperatorName>{{tester_name}}</OperatorName>
+        <SerialNumber>{{serial_number}}</SerialNumber>
+        <TestDateTime>{{start_time}}</TestDateTime>
+        <TestLoad>
+            <Model>{{test_load_model}}</Model>
+            <ChannelID>{{load_channel_id}}</ChannelID>
+        </TestLoad>
+    </Information>
+    <Tests/>
+</TestReport>
