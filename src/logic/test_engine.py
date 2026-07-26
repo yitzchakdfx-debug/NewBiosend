@@ -115,6 +115,10 @@ class TestRunnerThread(QThread):
     current_unit_changed = Signal(str, int, int, str)  # serial, index, total, position_label
     unit_finished = Signal(dict)
     unit_alert = Signal(str)
+    #: The electronic load could not be commanded off. Carries the reason.
+    #: Safety-relevant: the UUT may still be dissipating full test power with
+    #: nothing supervising it, so the UI must show this, not just log it.
+    load_shutdown_failed = Signal(str)
 
     def __init__(
         self,
@@ -333,6 +337,26 @@ class TestRunnerThread(QThread):
         total_units: int,
         steps: list[TestStep],
     ) -> BatchUnitReport:
+        """Run one unit, guaranteeing the load is commanded off afterwards.
+
+        The `finally` is the safety contract: this method has several early
+        returns (slot activation, input connection, polarity) plus the normal
+        path, and an exception can escape any of them. A unit must never be left
+        dissipating test power because of which branch happened to be taken, so
+        the shutdown lives here rather than in each exit.
+        """
+        try:
+            return self._run_single_unit_inner(unit, unit_index, total_units, steps)
+        finally:
+            self._force_load_off(unit)
+
+    def _run_single_unit_inner(
+        self,
+        unit: BatchUnit,
+        unit_index: int,
+        total_units: int,
+        steps: list[TestStep],
+    ) -> BatchUnitReport:
         record = self._new_record(unit, unit_index)
         # Each unit re-runs its Setup steps, so forget which bands the script set
         # for the previous unit before starting this one.
@@ -528,6 +552,8 @@ class TestRunnerThread(QThread):
         # load is turned off even when an earlier critical step failed.
         for step in teardown_steps:
             self._run_teardown_step(step, unit)
+        # The engine-level `loadoff` happens in `_run_single_unit`'s `finally`,
+        # so it covers this path and every early return alike.
 
         record.overall_passed = overall_passed and not self._stop_requested
         record.end_time = datetime.now()
@@ -837,6 +863,46 @@ class TestRunnerThread(QThread):
             return last_measurement > 0.5, last_measurement
 
         return True, last_measurement
+
+    def _force_load_off(self, unit: BatchUnit | None = None) -> bool:
+        """Command the electronic load off, whatever else happened. Returns success.
+
+        The script's `Always` teardown step already sends `loadoff`, but three
+        things can leave a unit dissipating full power anyway:
+
+        * the script has no `Always`/`loadoff` step at all (most `.tst` files
+          in `data/` do not),
+        * the run died before reaching teardown, or
+        * comms were down when teardown ran — pulling the load's LAN cable
+          aborts the test but leaves it drawing 300 W.
+
+        So this is belt-and-braces: it runs from the engine, not from script
+        content, on every exit path. `_io_with_resilience` inside the driver
+        reconnects and retries for its budget, which covers the case where the
+        cable is back by the time we get here.
+
+        On failure it emits `load_shutdown_failed` so the operator is told to
+        intervene physically. Software cannot switch off a load it cannot reach;
+        the honest outcome is a loud warning, not a silent log line.
+        """
+        label = f" [{unit.serial_number}]" if unit is not None else ""
+        try:
+            if self._hw_lock is not None:
+                with self._hw_lock:
+                    self._hw.execute_command("loadoff", [])
+            else:
+                self._hw.execute_command("loadoff", [])
+            self._emit_log("info", f"Load off confirmed{label}.")
+            return True
+        except Exception as exc:
+            reason = (
+                f"Could not switch the electronic load OFF{label}: {exc}. "
+                "The UUT may still be under full load — disconnect it manually "
+                "and check the load's front panel."
+            )
+            self._emit_log("error", reason)
+            self.load_shutdown_failed.emit(reason)
+            return False
 
     def _run_teardown_step(self, step: TestStep, unit: BatchUnit) -> None:
         """Run an `Always` step's commands unconditionally (safety teardown).

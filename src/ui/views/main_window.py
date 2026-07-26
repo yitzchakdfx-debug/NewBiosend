@@ -1084,6 +1084,7 @@ class MainWindow(QMainWindow):
         thread.current_unit_changed.connect(self._on_current_unit_changed)
         thread.unit_finished.connect(self._on_unit_finished)
         thread.unit_alert.connect(self._on_unit_alert)
+        thread.load_shutdown_failed.connect(self._on_load_shutdown_failed)
         thread.prompt_request.connect(self._on_prompt_request)
         thread.prompt_yesno_request.connect(self._on_prompt_yesno_request)
         thread.script_log.connect(self._on_script_log)
@@ -1328,6 +1329,23 @@ class MainWindow(QMainWindow):
     def _on_unit_alert(self, message: str) -> None:
         QMessageBox.warning(self, "Unit Alert", message)
 
+    def _on_load_shutdown_failed(self, reason: str) -> None:
+        """Warn that the electronic load may still be energized.
+
+        Uses `critical`, not `warning`: the previous behaviour was a trace-log
+        line, which is exactly how a UUT ends up sitting under 300 W after a
+        comms drop with nobody realising. Software cannot switch off a load it
+        cannot reach, so the operator has to act physically.
+        """
+        self._record_trace("error", reason)
+        QMessageBox.critical(
+            self,
+            "LOAD MAY STILL BE ON",
+            f"{reason}\n\n"
+            "Switch the load off at its front panel, or disconnect the UUT, "
+            "before continuing.",
+        )
+
     def _on_prompt_request(self, msg: str) -> None:
         """Show a modal prompt; resume the runner once the operator clicks OK."""
         QMessageBox.information(self, "Test Prompt", msg)
@@ -1419,6 +1437,32 @@ class MainWindow(QMainWindow):
             self._report_worker.wait(5000)
         if hasattr(self, "monitor_thread") and self.monitor_thread.isRunning():
             self.monitor_thread.stop()
+        self._release_load_on_exit()
+
+    def _release_load_on_exit(self) -> None:
+        """Last-chance load shutdown when the app is closing.
+
+        A stopped runner thread already drops its own load via the engine's
+        `finally`, so this covers what that cannot: closing without ever having
+        started a run, or after a run whose thread had already gone away, where
+        the load could still be holding a state set by an aborted attempt.
+
+        Silent and best-effort — the window is closing, so a modal warning has
+        nowhere to go. The trace pane still records the outcome, and the run-time
+        paths raise the loud warning where an operator can act on it.
+        """
+        try:
+            # Short timeout and no identity probe: the window is closing, so a
+            # missing instrument must not stall the exit.
+            driver = create_driver(timeout_ms=1500, probe_identity=False)
+            try:
+                driver.connect()
+                driver.execute_command("loadoff", [])
+                self.append_trace("Load off confirmed on exit.")
+            finally:
+                driver.disconnect()
+        except Exception as exc:
+            self.append_trace(f"Could not confirm load off on exit: {exc}")
 
     def logout(self) -> None:
         """Closes the main window and signals the application to restart the login flow."""
@@ -1637,6 +1681,7 @@ class MainWindow(QMainWindow):
             th.current_unit_changed.connect(self._on_current_unit_changed)
             th.unit_finished.connect(self._on_unit_finished)
             th.unit_alert.connect(self._on_unit_alert)
+            th.load_shutdown_failed.connect(self._on_load_shutdown_failed)
             th.prompt_request.connect(self._on_prompt_request)
             th.prompt_yesno_request.connect(self._on_prompt_yesno_request)
             th.script_log.connect(self._on_script_log)

@@ -204,6 +204,38 @@ keeps only `:Polarity Check Setup` (`loadoff` + `Delay 3000`).
 
 ---
 
+## The load is always commanded off (safety)
+
+A UUT must never be left dissipating test power. Four layers, because each one
+alone has a hole:
+
+1. **The script's `Always` teardown** (`:Cleanup` / `loadoff` in
+   `biosend_test.tst`) runs even after a critical abort or a user stop. But most
+   `.tst` files in `data/` declare no `Always` step at all.
+2. **The engine's `finally`.** `_run_single_unit` wraps the whole per-unit run
+   and calls `_force_load_off` on the way out. This is the layer that matters:
+   the method has early returns for slot activation, input connection and
+   polarity, plus the normal path, and an exception can escape any of them. The
+   shutdown does not depend on which branch was taken or on script content.
+3. **`ProdigitVisaDriver.disconnect`** sends `LOAD OFF` before closing the VISA
+   resource. Closing a socket does not stop a 3316G — it holds its last
+   commanded state — and once closed there is no way left to command it.
+   Skipped while `_reconnecting`, so a reconnect probe's teardown does not fight
+   the reconnect it belongs to.
+4. **App exit.** `_release_load_on_exit` (from `_shutdown_threads`) opens a
+   short-timeout connection purely to send `loadoff`, covering a session that
+   closed without a run or after its thread had gone.
+
+**What software cannot do:** switch off a load it cannot reach. Pulling the
+load's LAN cable aborts the test (see monitoring below) but leaves it drawing
+current, and `loadoff` then fails. `_force_load_off` therefore emits
+`load_shutdown_failed`, which `MainWindow._on_load_shutdown_failed` raises as a
+**critical** modal telling the operator to switch off at the front panel or
+disconnect the UUT. It used to be a trace-log line — which is precisely how a
+unit sits under 300 W with nobody noticing. The driver's `_io_with_resilience`
+reconnect budget means a cable restored before teardown still results in a
+successful, confirmed shutdown.
+
 ## Continuous monitoring aborts on a lost instrument (§1.1.7.3)
 
 `Delay <ms> <lo> <hi>` polls the voltage every 300 ms for the whole wait. Two

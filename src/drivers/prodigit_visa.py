@@ -162,9 +162,27 @@ class ProdigitVisaDriver(BaseDriver):
         return True
 
     def disconnect(self) -> None:
+        """Drop the load, then close the VISA resource.
+
+        Closing the socket does not stop a 3316G drawing current — it keeps the
+        last commanded state. So the load is switched off first: once the
+        resource is closed there is no way left to command it, and the UUT would
+        sit under full test load until someone noticed.
+
+        Best-effort by design. A failure here must not prevent the close (that
+        would leak the resource and block the next connect), and callers that
+        care about confirmation use the engine's `_force_load_off`, which reports
+        to the operator. `_reconnecting` is honoured so a reconnect probe's own
+        teardown does not fight the reconnect it is part of.
+        """
         if self._ctx is None:
             return
         try:
+            if not self._reconnecting:
+                try:
+                    self._write(PRODIGIT_SET_LOAD, state="OFF")
+                except Exception:
+                    pass  # unreachable instrument — nothing more we can do here
             self._ctx.resource.close()
         finally:
             self._ctx = None
