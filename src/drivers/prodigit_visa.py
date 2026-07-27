@@ -8,6 +8,8 @@ come from ``config.py`` and can be overridden in ``.env`` without code changes.
 from __future__ import annotations
 
 import math
+import socket
+import struct
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -64,6 +66,73 @@ _RECONNECT_RETRY_DELAY_S = 0.5
 _POLARITY_KEYWORD_NOMINAL_V = 24.0
 
 
+#: VISA error returned when the instrument refuses a new TCP session. On the
+#: 3300G this almost always means "something already holds my one connection",
+#: not "I am unreachable" — the raw code says neither.
+_VI_ERROR_CONN_REFUSED = "-1073807339"
+
+
+def _connect_error_message(exc: Exception) -> str:
+    """Explain a failed connect in terms an operator can act on.
+
+    The bare VISA code sent this project through three debugging rounds. The
+    3300G allows one TCP connection, so a refusal usually means the slot is
+    taken — by another copy of the app, an orphaned process, a bench tool, or a
+    previous session whose socket the device has not timed out yet.
+    """
+    detail = str(exc)
+    if _VI_ERROR_CONN_REFUSED not in detail:
+        return f"Failed to connect to Prodigit VISA device: {detail}"
+    return (
+        "The electronic load refused the connection. It accepts only ONE "
+        "connection at a time, so something is probably still holding it:\n"
+        "  • another copy of this application,\n"
+        "  • a leftover process from a previous session,\n"
+        "  • a terminal/bench tool connected to the same port, or\n"
+        "  • a session dropped by an unplugged cable, which the instrument "
+        "keeps open until it times out (this clears on its own, typically "
+        "within a couple of minutes).\n"
+        f"Underlying VISA error: {detail}"
+    )
+
+
+def _tune_socket(resource: Any) -> None:
+    """Make the TCP socket release the instrument promptly. Best-effort.
+
+    The 3300G accepts exactly **one** TCP connection. If a session ends without
+    the device being told — a yanked cable, a killed process — it keeps the slot
+    until its own timeout expires, which is minutes. During that window every
+    new connect fails with ``-1073807339``, from any process, so restarting the
+    app does not help and only waiting does.
+
+    Two settings shrink that window:
+
+    * ``SO_LINGER`` with timeout 0 makes ``close()`` send RST instead of FIN, so
+      an abrupt close frees the slot immediately (measured ~0.1 s, versus
+      minutes when the peer is left guessing).
+    * ``SO_KEEPALIVE`` lets the OS notice a half-open link rather than holding a
+      dead session open indefinitely.
+
+    Guarded throughout: reaching the raw socket goes through pyvisa-py internals
+    that do not exist on NI-VISA and may move between releases. Failing to tune
+    is not worth failing a connection over.
+    """
+    try:
+        sock = resource.visalib.sessions[resource.session].interface
+    except Exception:
+        return  # not pyvisa-py, or the internals moved — nothing to tune
+    try:
+        sock.setsockopt(
+            socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0)
+        )
+    except Exception:
+        pass
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    except Exception:
+        pass
+
+
 def _format_template(template: str, **values: Any) -> str:
     if not template.strip():
         return ""
@@ -83,6 +152,10 @@ def _parse_float(value: str, fallback: float | None = None) -> float:
 class _VISAContext:
     resource: Any
     resource_name: str
+    # The ResourceManager that opened `resource`. Held so `disconnect` can close
+    # it: `connect` builds a new one per call, and without this every connect
+    # leaked one, leaving release times unpredictable.
+    manager: Any = None
 
 
 class ProdigitVisaDriver(BaseDriver):
@@ -152,13 +225,14 @@ class ProdigitVisaDriver(BaseDriver):
             resource.timeout = self._timeout_ms
             resource.read_termination = self._read_term
             resource.write_termination = self._write_term
-            self._ctx = _VISAContext(resource=resource, resource_name=resource_name)
+            _tune_socket(resource)
+            self._ctx = _VISAContext(
+                resource=resource, resource_name=resource_name, manager=rm
+            )
         except HardwareError:
             raise
         except Exception as exc:
-            raise HardwareError(
-                f"Failed to connect to Prodigit VISA device: {exc}"
-            ) from exc
+            raise HardwareError(_connect_error_message(exc)) from exc
 
         if self._probe_identity:
             try:
@@ -191,6 +265,15 @@ class ProdigitVisaDriver(BaseDriver):
                 except Exception:
                     pass  # unreachable instrument — nothing more we can do here
             self._ctx.resource.close()
+            # Close the ResourceManager too. `connect` builds one per call, so
+            # without this each connect leaked one, keeping pyvisa-py state
+            # alive and making it less predictable when the instrument's single
+            # connection slot actually comes free.
+            if self._ctx.manager is not None:
+                try:
+                    self._ctx.manager.close()
+                except Exception:
+                    pass
         finally:
             self._ctx = None
 

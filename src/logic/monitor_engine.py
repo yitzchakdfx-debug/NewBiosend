@@ -55,7 +55,15 @@ class MonitorThread(QThread):
     # ------------------------------------------------------------------
 
     def pause(self) -> None:
-        """Stop polling and release the hardware connection."""
+        """Stop polling and release the hardware connection.
+
+        `_paused` is set *before* taking the lock on purpose: a connect that is
+        already in flight re-checks the flag while holding the lock and throws
+        away what it opened. Without that handshake the poll loop could reopen
+        the link microseconds after this returns, and since the 3300G accepts
+        only one TCP connection the rest of the app would then be locked out of
+        the instrument for as long as the monitor kept the slot.
+        """
         self._paused = True
         with self._driver_lock:
             if self._driver is not None:
@@ -73,9 +81,12 @@ class MonitorThread(QThread):
         back. This is why returning to the main screen with the cable still out
         no longer leaves the monitor permanently dead.
         """
+        # Clear `_paused` first: `_connect_driver` discards its result while
+        # paused, so connecting before this would always be thrown away and the
+        # panel would sit dead until the next scheduled retry.
+        self._paused = False
         if not self._simulate:
             self._connect_driver()
-        self._paused = False
 
     def stop(self) -> None:
         self._stop_requested = True
@@ -154,6 +165,18 @@ class MonitorThread(QThread):
             return False
 
         with self._driver_lock:
+            # Re-check under the lock: `pause()` may have run while the connect
+            # above was in flight (it takes up to the connect timeout). Handing
+            # the driver over now would resurrect a link the caller just
+            # released, and with a single-connection instrument that locks the
+            # test runner and the pre-test scan out of the hardware entirely.
+            if self._paused or self._stop_requested:
+                try:
+                    drv.disconnect()
+                except Exception:
+                    pass
+                self._driver = None
+                return False
             self._driver = drv
         return True
 

@@ -204,6 +204,43 @@ keeps only `:Polarity Check Setup` (`loadoff` + `Delay 3000`).
 
 ---
 
+## The 3300G accepts ONE TCP connection (design constraint)
+
+Measured on the station: a second simultaneous connection is refused with
+`could not connect: -1073807339`. Everything that touches the instrument — the
+live monitor, the pre-test scan, the test runner, the exit-time load shutdown —
+competes for a single slot. Most "cannot connect" reports trace back to this,
+not to the network.
+
+**Holding the slot.** `MonitorThread` owns the connection on the main screen and
+releases it in `pause()` before a scan or run. That handshake used to race: the
+poll loop could be inside `_connect_driver()` when `pause()` ran and reopen the
+link straight after, leaving `_paused=True` with the driver still held and every
+other component locked out. Now `pause()` sets the flag *before* taking the
+lock, and `_connect_driver` re-checks it while holding the lock, discarding what
+it just opened if paused. `resume()` clears the flag first, or its own connect
+would be discarded.
+
+**Releasing the slot.** A session that ends without the device being told — a
+yanked cable, a killed process — leaves the 3300G holding the slot until its own
+timeout expires, which is minutes. That is why restarting the app does not help
+and only waiting does. `_tune_socket` sets `SO_LINGER` (timeout 0) so a close
+sends RST rather than FIN, plus `SO_KEEPALIVE`. Measured: after a hard
+`taskkill /F` on a process holding the connection, the next connect succeeded in
+**0.33 s** instead of minutes. Both settings are best-effort — they reach
+pyvisa-py internals that do not exist under NI-VISA — and a failure to tune
+never fails the connection.
+
+`_VISAContext` also carries the `ResourceManager` so `disconnect()` can close it;
+`connect()` builds one per call and previously leaked every one.
+
+**Diagnosing it.** `_connect_error_message` turns `-1073807339` into an
+explanation naming the likely holders (a second copy of the app, an orphaned
+process, a bench tool, a session the instrument has not timed out yet) and notes
+that it clears on its own within a couple of minutes. The bare code cost three
+debugging rounds. A second copy of the app is prevented by
+`SingleInstanceLock` (Windows named mutex, `logic/file_lock.py`).
+
 ## No silent demo-mode fallback
 
 A failed `connect()` used to swap the driver for `MockHardware` and carry on.
