@@ -68,6 +68,10 @@ _CONNECT_RETRY_BUDGET_S = 8.0
 # back, so a tight loop would only produce more failures.
 _CONNECT_RETRY_DELAY_S = 1.0
 
+# Settling time between switching the load off and reading the polarity voltage.
+# Spec §1.1.7.1 specifies 3 seconds for this test.
+_POLARITY_SETTLE_MS = 3000
+
 
 class _MonitorOutOfRange(Exception):
     """Raised when continuous voltage monitoring during a `Delay` trips.
@@ -409,33 +413,44 @@ class TestRunnerThread(QThread):
                 overall_result="FAIL",
             )
 
-        polarity_ok = self._check_polarity(record, unit) if self._production_flow else True
-        if not polarity_ok:
-            record.end_time = datetime.now()
-            msg = (
-                f"Polarity check failed for {unit.serial_number}"
-                f" at {unit.position_label}. Skipping report for this unit."
-            )
-            self.unit_alert.emit(msg)
-            self._save_record(record)
-            return BatchUnitReport(
-                unit=unit,
-                record=record,
-                tester_name=self.tester_name,
-                employee_id=self.employee_id,
-                uut_type=self.uut_type,
-                test_program_name=self._logical_script_name,
-                overall_result="FAIL",
-                alert_message=msg,
-                should_generate_report=False,
-            )
-
         # Steps marked `Always` are teardown steps (e.g. a final loadoff). They
         # are pulled out of the normal sequence and run unconditionally at the
         # end — even after a critical abort or a user stop — so the load is never
         # left energized after a failure.
         normal_steps = [s for s in steps if not getattr(s, "always", False)]
         teardown_steps = [s for s in steps if getattr(s, "always", False)]
+
+        # The polarity gate does not run before the loop. Spec §1.1.4.2 makes the
+        # manual LED check the first test — "the subsequent DC Load tests will
+        # not be permitted to proceed" until the operator answers — and Appendix
+        # A numbers LED as Test 1, Polarity as Test 2. So it runs inside the
+        # loop, right after the LED step passes and before any load is applied.
+        #
+        # If the selected steps contain no LED check (a partial Maintenance
+        # selection, or a product whose script has none), fall back to gating up
+        # front: polarity must still be verified before a load is switched on.
+        has_led_step = any(self._is_led_step(s) for s in normal_steps)
+        polarity_pending = self._production_flow and has_led_step
+        if self._production_flow and not has_led_step:
+            if not self._check_polarity(record, unit):
+                msg = (
+                    f"Polarity check failed for {unit.serial_number}"
+                    f" at {unit.position_label}. Skipping report for this unit."
+                )
+                self.unit_alert.emit(msg)
+                record.end_time = datetime.now()
+                self._save_record(record)
+                return BatchUnitReport(
+                    unit=unit,
+                    record=record,
+                    tester_name=self.tester_name,
+                    employee_id=self.employee_id,
+                    uut_type=self.uut_type,
+                    test_program_name=self._logical_script_name,
+                    overall_result="FAIL",
+                    alert_message=msg,
+                    should_generate_report=False,
+                )
 
         total_steps = len(normal_steps) * self._loop_count
         completed = 0
@@ -520,6 +535,22 @@ class TestRunnerThread(QThread):
                     )
                     abort_loops = True
                     break
+
+                # Spec §1.1.4.2 / Appendix A: LED is Test 1 and gates everything
+                # after it; Polarity is Test 2. Run the polarity gate as soon as
+                # the LED step has passed, before any load is applied.
+                if polarity_pending and self._is_led_step(step):
+                    polarity_pending = False
+                    if not self._check_polarity(record, unit):
+                        msg = (
+                            f"Polarity check failed for {unit.serial_number}"
+                            f" at {unit.position_label}."
+                        )
+                        self._emit_log("error", f"CRITICAL ABORT: {msg}")
+                        self.unit_alert.emit(msg)
+                        overall_passed = False
+                        abort_loops = True
+                        break
 
                 if self._stop_on_fail and not passed:
                     self._emit_log(
@@ -622,6 +653,19 @@ class TestRunnerThread(QThread):
         when it cannot read, and that lands here as a FAIL.
         """
         floor_v = self._polarity_floor_v()
+        # §1.1.7.1 requires the readback with the load OFF, and 3 s to settle.
+        # Enforced here rather than trusting a script step to have run first:
+        # the gate now fires right after the LED check, which may be before the
+        # script reaches its own `:Polarity Check Setup`.
+        try:
+            self._hw_execute("loadoff", [])
+            self.msleep(_POLARITY_SETTLE_MS)
+        except Exception as exc:
+            self._emit_log(
+                "error",
+                f"{unit.serial_number}: could not switch the load off before the"
+                f" polarity check: {exc}",
+            )
         try:
             polarity = self._hw_execute("checkpolarity", [str(unit.slot_index)])
         except Exception as exc:
@@ -978,6 +1022,18 @@ class TestRunnerThread(QThread):
     @staticmethod
     def _has_promptyesno(step: TestStep) -> bool:
         return any(str(cmd["cmd"]).lower() == "promptyesno" for cmd in step.commands)
+
+    @classmethod
+    def _is_led_step(cls, step: TestStep) -> bool:
+        """True for the manual LED check that gates the rest of the run.
+
+        Detected by its `PromptYesNo` — the operator-answered step — rather than
+        by name, so a renamed or translated step still gates correctly. Falls
+        back to the spec's `Report` name for a step that asks nothing.
+        """
+        if cls._has_promptyesno(step):
+            return True
+        return str(getattr(step, "report_test", "")).strip() == "LED Indication Test"
 
     def _execute_command(self, cmd: dict) -> float | None:
         name = str(cmd["cmd"]).lower()

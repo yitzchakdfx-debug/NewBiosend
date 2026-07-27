@@ -32,24 +32,23 @@ PromptYesNo Is the Green LED on the UUT panel ON and STEADY?
 # The ±10% window from Rev 1.0 was REMOVED — this is a wiring check, not an
 # accuracy check. Voltage accuracy is verified by Tests 3 and 4 at ±5%.
 #
-# The measurement itself is performed by the ENGINE, not by this script:
-# `TestRunnerThread._check_polarity` runs before the scripted flow, reads the
-# voltage, and requires it to be positive AND above a noise floor (10% of the
-# input target) so a dead UUT reading 0.00 V cannot pass. It emits the
-# "Polarity Check" row for both the PDF and the CAMSTAR XML.
+# THIS TEST HAS NO STEPS HERE — it is performed entirely by the ENGINE.
 #
-# This script therefore only prepares the condition the spec demands — load
-# OFF, then 3 seconds to settle. A scripted `:Polarity Check` measurement step
-# used to live here too; it produced a SECOND, duplicate row with a laxer limit
-# (>= 0 V, which passes a dead unit) and Appendix B expects exactly one <Test>
-# named "Polarity Check". Do not re-add it.
+# `TestRunnerThread._check_polarity` runs automatically, immediately after the
+# LED step above passes and before any load is applied, which is the order
+# §1.1.4.2 and Appendix A require (LED = Test 1, Polarity = Test 2). It switches
+# the load off, waits 3 s to settle, reads the voltage, and requires it to be
+# positive AND above a noise floor (10 % of the input target) so a dead UUT
+# reading 0.00 V cannot pass. It emits the single "Polarity Check" row for both
+# the PDF and the CAMSTAR XML.
+#
+# Do not add `:Polarity Check` or `:Polarity Check Setup` steps here. A scripted
+# measurement step used to exist and produced a SECOND, duplicate row with a
+# laxer limit (>= 0 V, which passes a dead unit), while Appendix B expects
+# exactly one <Test> named "Polarity Check". A separate setup step is also
+# unnecessary now: the engine performs its own load-off and settle, and a
+# scripted one would run at the wrong point in the sequence.
 # ─────────────────────────────────────────────────────────
-
-:Polarity Check Setup
-Hidden
-Critical
-loadoff
-Delay 3000
 
 # ─────────────────────────────────────────────────────────
 # TEST 3 – Low Load Stability Test – 100W

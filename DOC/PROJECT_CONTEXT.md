@@ -196,11 +196,28 @@ its *Measured Output Value* and Appendix B gets
 exercise the same units and threshold.
 
 The engine row carries `report_test` / `report_quantity` — unlike the other
-fixture checks, Polarity Check is a *spec* test and must reach the XML. The
-script therefore has no `:Polarity Check` measurement step of its own; it used
-to, which produced a duplicate row with a laxer limit (`Limits 0 1000`, passing
-a dead unit) and two `<Test>` nodes where Appendix B expects one. The script
-keeps only `:Polarity Check Setup` (`loadoff` + `Delay 3000`).
+fixture checks, Polarity Check is a *spec* test and must reach the XML.
+
+**Ordering: LED first, polarity second.** The gate used to run before the
+scripted sequence, alongside the 24 V input check, so polarity was measured
+*before* the operator was asked about the LED. Spec §1.1.4.2 makes the manual
+LED check the first test — "the subsequent DC Load tests will not be permitted
+to proceed" until it is answered — and Appendix A numbers LED as Test 1 and
+Polarity as Test 2. The gate therefore fires from inside the step loop, right
+after the LED step passes and before any load is applied.
+`_is_led_step` identifies it by its `PromptYesNo` (so a rename or translation
+still gates), falling back to the Appendix B `Report` name. If the selected
+steps contain no LED check — a partial Maintenance selection, or a product whose
+script has none — the gate runs up front instead, because polarity must still be
+verified before a load is switched on.
+
+`_check_polarity` performs its own `loadoff` + 3 s settle (`_POLARITY_SETTLE_MS`)
+before reading, as §1.1.7.1 requires. It does not rely on a script step for
+that: the gate now runs at a point the script does not control. The script
+accordingly has **no** polarity steps at all — neither the measurement (which
+produced a duplicate row with a laxer `Limits 0 1000` that passes a dead unit,
+and two `<Test>` nodes where Appendix B expects one) nor a setup step (which
+would now run at the wrong point and waste a second settle).
 
 ---
 
