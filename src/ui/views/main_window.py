@@ -53,6 +53,7 @@ from logic.test_engine import TestRunnerThread
 from paths import resource_path, user_data_path
 from ui.views.audit_viewer_dialog import AuditViewerDialog
 from ui.views.connections_dialog import ConnectionsDialog
+from ui.views.led_check_dialog import LedCheckDialog
 from ui.views.limits_editor_dialog import LimitsEditorDialog
 from ui.views.batch_pre_test_dialog import BatchPreTestDialog
 from ui.views.report_templates_dialog import ReportTemplatesDialog
@@ -125,7 +126,9 @@ class MainWindow(QMainWindow):
             self._secure = None
         self._last_run_meta: dict | None = None
         self._last_run_rows: list[dict] = []
-        self._report_worker: ReportWorker | None = None
+        # One entry per in-flight report. A list rather than a single slot so a
+        # parallel run's workers cannot overwrite each other's reference.
+        self._report_workers: list[ReportWorker] = []
         self._setup_ui()
         if SHOW_LIVE_MONITOR:
             self.monitor_thread = MonitorThread(parent=self, simulate=(HARDWARE_BACKEND == "mock"))
@@ -885,19 +888,34 @@ class MainWindow(QMainWindow):
         if not self.control_panel.chk_save_log.isChecked():
             self.append_trace("Save as log disabled — skipping PDF archive.")
             return
-        self._report_worker = ReportWorker(meta, rows, self._current_role(), parent=self)
-        self._report_worker.archived.connect(
+        # Kept in a list, not a single attribute. A parallel run calls this once
+        # per UUT in a tight loop, and a lone slot meant unit N+1 overwrote unit
+        # N's only reference while its `deleteLater` was still pending — the
+        # worker could be collected mid-flight and that unit silently lost its
+        # CAMSTAR XML (observed in the archive: a serial with a PDF and no XML).
+        # Spec §1.1.4.4 requires a report per UUT, so every worker must outlive
+        # the loop that started it.
+        worker = ReportWorker(meta, rows, self._current_role(), parent=self)
+        self._report_workers.append(worker)
+        worker.archived.connect(
             lambda p: self.append_trace(f"Report archived: {Path(p).name}")
         )
-        self._report_worker.failed.connect(
+        worker.failed.connect(
             lambda e: self.append_trace(f"Report generation failed: {e}")
         )
         # The PDF archived but the CAMSTAR XML did not. Surfaced separately and
         # prominently: the run looks complete, yet MES has nothing to ingest.
-        self._report_worker.xml_failed.connect(self._on_xml_report_failed)
-        self._report_worker.finished.connect(self._report_worker.deleteLater)
-        self._report_worker.finished.connect(lambda: setattr(self, "_report_worker", None))
-        self._report_worker.start()
+        worker.xml_failed.connect(self._on_xml_report_failed)
+        worker.finished.connect(worker.deleteLater)
+        worker.finished.connect(lambda w=worker: self._forget_report_worker(w))
+        worker.start()
+
+    def _forget_report_worker(self, worker: ReportWorker) -> None:
+        """Drop a finished worker from the keep-alive list."""
+        try:
+            self._report_workers.remove(worker)
+        except ValueError:
+            pass
 
     def load_script(self) -> None:
         """Load a test from the database catalog (temp file) for every role."""
@@ -1359,20 +1377,42 @@ class MainWindow(QMainWindow):
             self.test_thread.resume()
 
     def _on_prompt_yesno_request(self, msg: str) -> None:
-        """Show a Yes/No prompt; relay the answer to the correct runner thread."""
-        result = QMessageBox.question(
-            self,
-            "Test Prompt",
-            msg,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        answer = result == QMessageBox.StandardButton.Yes
+        """Ask the operator a pass/fail question; relay it to the right thread.
+
+        The LED indication test gets the Pass/Fail checkboxes spec §1.1.6.3
+        names explicitly. Any other `PromptYesNo` step keeps the plain Yes/No
+        box: the spec mandates the checkbox for the LED check specifically, and
+        a generic script question reads better as Yes/No.
+        """
+        if self._is_led_prompt(msg):
+            dlg = LedCheckDialog(msg, parent=self)
+            dlg.exec()
+            answer = dlg.result_is_pass()
+        else:
+            result = QMessageBox.question(
+                self,
+                "Test Prompt",
+                msg,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            answer = result == QMessageBox.StandardButton.Yes
         sender = self.sender()
         if sender is not None and hasattr(sender, "submit_yesno_answer"):
             sender.submit_yesno_answer(answer)  # type: ignore[attr-defined]
         elif self.test_thread is not None:
             self.test_thread.submit_yesno_answer(answer)
+
+    @staticmethod
+    def _is_led_prompt(msg: str) -> bool:
+        """True when a PromptYesNo is the manual LED indication check.
+
+        Matched on the prompt text rather than the step name: the engine sends
+        only the message. "led" alone is enough of a signal here — a script's
+        other yes/no questions are about fixtures and connections, and the cost
+        of a false positive is merely showing Pass/Fail instead of Yes/No.
+        """
+        return "led" in msg.lower()
 
     def _on_script_log(self, msg: str) -> None:
         """Append an operator-authored Log line to the trace, distinctly styled."""
@@ -1439,8 +1479,14 @@ class MainWindow(QMainWindow):
             self.test_thread.stop()
             if not self.test_thread.wait(5000):
                 self.append_trace("Warning: test thread did not stop within 5s.")
-        if self._report_worker is not None and self._report_worker.isRunning():
-            self._report_worker.wait(5000)
+        # Wait on every outstanding worker, not just the most recent: a parallel
+        # run has one per UUT, and closing while one is mid-write would truncate
+        # that unit's report.
+        for worker in list(self._report_workers):
+            if worker.isRunning() and not worker.wait(5000):
+                self.append_trace(
+                    "Warning: a report worker did not finish within 5s."
+                )
         if hasattr(self, "monitor_thread") and self.monitor_thread.isRunning():
             self.monitor_thread.stop()
         self._release_load_on_exit()
@@ -1739,8 +1785,17 @@ class MainWindow(QMainWindow):
                 meta, _ = th.report_snapshot()
                 if str(meta.get("overall_result", "")).upper() != "PASS":
                     overall_passed = False
-            except Exception:
-                pass
+            except Exception as exc:
+                # Never silent: this used to be `except Exception: pass`, so a
+                # unit that failed to produce its report looked like a clean
+                # run. A missing report is a spec §1.1.4.4 breach and the
+                # operator has to know which unit it was.
+                units = getattr(th, "_batch_units", None) or []
+                serial = getattr(units[0], "serial_number", "?") if units else "?"
+                self._record_trace(
+                    "error", f"Report generation failed for unit {serial}: {exc}"
+                )
+                overall_passed = False
         self.test_thread = original_thread
 
         try:
