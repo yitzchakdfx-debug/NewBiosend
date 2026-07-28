@@ -139,10 +139,29 @@ class BatchUnitReport:
     overall_result: str
     alert_message: str = ""
     should_generate_report: bool = True
+    #: Steps actually run vs. steps the script defines. A Technician may untick
+    #: steps before a run (`Capability.SELECT_STEPS`), and deselected steps are
+    #: filtered out before execution — so unlike a step skipped *after* a
+    #: failure they leave no N/A row and would otherwise be invisible. Spec
+    #: §1.1.4.3 grants the production roles no configuration privileges, so a
+    #: reduced run must at minimum be disclosed on the report rather than
+    #: reading as a full pass. 0 means "not recorded".
+    steps_selected: int = 0
+    steps_available: int = 0
+
+    def step_coverage(self) -> str:
+        """`"17 / 20 (partial)"` for a reduced run, `"20 / 20"` for a full one."""
+        if not self.steps_available:
+            return ""
+        text = f"{self.steps_selected} / {self.steps_available}"
+        if self.steps_selected < self.steps_available:
+            text += " (partial)"
+        return text
 
     def meta(self) -> dict[str, Any]:
         end = self.record.end_time or datetime.now()
         return {
+            "steps_executed": self.step_coverage(),
             "overall_result": self.overall_result,
             "tester_name": self.tester_name,
             "employee_id": self.employee_id,

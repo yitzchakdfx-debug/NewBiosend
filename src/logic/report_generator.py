@@ -33,6 +33,7 @@ from logic.report_templates import (
 )
 from logic.report_xml import (
     build_camstar_tree,
+    group_by_report_test,
     has_report_mapping,
     template_values,
     tree_to_text,
@@ -199,7 +200,14 @@ def _header_rows(run_meta: dict[str, Any], role: str) -> list[tuple[str, str]]:
             label, field = entry
         except (TypeError, ValueError):
             continue  # malformed row in an edited template — skip, don't crash
-        rows.append((str(label), values.get(str(field), "")))
+        value = values.get(str(field), "")
+        # Step coverage is only meaningful when it was recorded, and only worth
+        # a line when it says something. Printing an empty "Tests Executed:"
+        # row on every full run would add noise and invite the reader to wonder
+        # what is missing.
+        if str(field) == "steps_executed" and not str(value).strip():
+            continue
+        rows.append((str(label), value))
     return rows
 
 
@@ -247,34 +255,6 @@ _APPENDIX_A_QUANTITIES = (
     ("Power", "W"),
     ("Resistance", "Ω"),
 )
-
-
-def _grouped_by_report_test(
-    results: list[dict[str, Any]],
-) -> list[tuple[str, list[dict[str, Any]]]]:
-    """Group rows by their `Report <name>`, preserving first-seen order.
-
-    Rows with no `report_test` (station fixtures such as Input Connection Check)
-    are left out — Appendix A lists UUT tests only.
-    """
-    grouped: dict[str, list[dict[str, Any]]] = {}
-    for row in results:
-        name = str(row.get("report_test", "")).strip()
-        if name:
-            grouped.setdefault(name, []).append(row)
-
-    # Appendix A numbers the tests 1-4 in a fixed order. Script order differs:
-    # the engine's polarity gate runs before the scripted LED prompt, so
-    # first-seen order would print Polarity as "Test 1". Known tests are pinned
-    # to the spec order; anything else keeps first-seen order after them, so a
-    # non-spec product still renders.
-    spec_order = list(DEFAULT_PDF_TEMPLATE.get("test_sections", {}))
-    return sorted(
-        grouped.items(),
-        key=lambda kv: (
-            spec_order.index(kv[0]) if kv[0] in spec_order else len(spec_order),
-        ),
-    )
 
 
 def _measurement_lines(rows: list[dict[str, Any]]) -> list[tuple[str, str]]:
@@ -332,7 +312,7 @@ def _appendix_a_sections(
     Returning [] lets the caller fall back to the flat results table, so
     non-spec products (SPREOS, 12VDC RF, …) still get a report.
     """
-    grouped = _grouped_by_report_test(results)
+    grouped = group_by_report_test(results)
     if not grouped:
         return []
 
@@ -430,14 +410,6 @@ def write_pdf_report(
     role: str,
 ) -> None:
     """Build paginated PDF (SimpleDocTemplate + LongTable for results splits across pages)."""
-    # Appendix A §2.1.3.2-2.1.3.4 require the Measured Output Value on Tests
-    # 2/3/4 with no role qualifier, so the archived report always carries the
-    # numbers. This used to follow `Capability.VIEW_MEASURED_DETAIL`, which
-    # Operator and Technician lack — meaning a normal production run archived a
-    # PDF containing only test names and PASS/FAIL, with no measurements at all.
-    # The capability still gates the live results table and trace log in the UI;
-    # what the permanent record must contain is a separate question.
-    show_detail = True
     template = read_pdf_template()
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -501,12 +473,24 @@ def write_pdf_report(
         flow.append(Paragraph("<b>All Recorded Steps</b>", styles["Heading2"]))
         flow.append(Spacer(1, 0.1 * inch))
 
-    key = "detail_columns" if show_detail else "summary_columns"
-    columns = _column_pairs(template, key)
+    # Always `detail_columns`, never `summary_columns`. Appendix A §2.1.3.2-
+    # 2.1.3.4 require the Measured Output Value on Tests 2/3/4 with no role
+    # qualifier, so the archived PDF always carries the numbers. This used to
+    # select the column list from `Capability.VIEW_MEASURED_DETAIL`, which
+    # Operator and Technician lack — meaning a normal production run archived a
+    # PDF of test names and PASS/FAIL with no measurements at all. The
+    # capability still gates the live results table and trace log in the UI;
+    # what the permanent record must contain is a separate question.
+    #
+    # `summary_columns` therefore has no effect here and is CSV-only — see
+    # `_write_csv`. Selecting it via a dead `if` was worse than not offering it:
+    # an admin could edit it, be told the template was valid, save, and see no
+    # change in the PDF, which is exactly what spec §1.1.4.4 Note 2 forbids.
+    columns = _column_pairs(template, "detail_columns")
     headers = [label for label, _ in columns]
     # The first column absorbs the slack, so renaming or reordering columns in
     # the template cannot push the table off the page.
-    rest = 0.75 * inch if show_detail else 1 * inch
+    rest = 0.75 * inch
     col_w = [6.35 * inch - rest * (len(headers) - 1)] + [rest] * (len(headers) - 1)
 
     n_cols = len(headers)

@@ -89,9 +89,17 @@ DEFAULT_PDF_TEMPLATE: dict[str, Any] = {
         ["SW SN", "tester_serial"],
         ["SW Version", "software_version"],
         ["Role / Report Detail", "role"],
+        # Discloses a partial run. A role holding SELECT_STEPS may untick steps,
+        # and deselected steps are filtered out before execution — leaving no
+        # N/A row — so without this line a reduced run reads as a full pass.
+        # Renders as "17 / 20 (partial)", or is omitted when the run was full.
+        ["Tests Executed", "steps_executed"],
     ],
     # [column label, value field]. Fields: test_name, min, max, value, unit,
     # result. Labels are free text; fields must come from that set.
+    #
+    # `detail_columns` drives the PDF's "All Recorded Steps" table, and the CSV
+    # export for roles holding `Capability.VIEW_MEASURED_DETAIL`.
     "detail_columns": [
         ["Test Name", "test_name"],
         ["Min", "min"],
@@ -100,6 +108,10 @@ DEFAULT_PDF_TEMPLATE: dict[str, Any] = {
         ["Unit", "unit"],
         ["Status", "result"],
     ],
+    # CSV-ONLY, for roles without `Capability.VIEW_MEASURED_DETAIL`. The PDF
+    # ignores this and always uses `detail_columns`: Appendix A requires the
+    # measured values in the archived report regardless of who ran the test.
+    # See the comment in `report_generator.write_pdf_report`.
     "summary_columns": [
         ["Test Name", "test_name"],
         ["Result", "result"],
@@ -312,6 +324,11 @@ def placeholder_names() -> set[str]:
         "overall_result",
         "test_program_name",
         "load_channel_id",
+        # "17 / 20 (partial)" when steps were deselected before the run; blank
+        # for a full run. Must stay in step with `report_xml.template_values` —
+        # a name missing here is rejected by `validate_pdf_template` even though
+        # the report layer would render it fine.
+        "steps_executed",
         "test_load_model",
         "tester_serial",
         "software_version",

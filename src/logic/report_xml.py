@@ -19,6 +19,7 @@ from xml.dom import minidom
 
 from config import TEST_LOAD_MODEL, TESTER_SERIAL_NUMBER
 from logic.report_templates import (
+    DEFAULT_PDF_TEMPLATE,
     DEFAULT_XML_TEMPLATE,
     TESTS_PLACEHOLDER,
     TemplateError,
@@ -47,6 +48,42 @@ QUANTITY_ORDER: tuple[str, ...] = ("Voltage", "Current", "Power", "Resistance")
 def has_report_mapping(results: list[dict[str, Any]]) -> bool:
     """True if any row declares a CAMSTAR placement."""
     return any(str(row.get("report_test", "")).strip() for row in results)
+
+
+def group_by_report_test(
+    results: list[dict[str, Any]],
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    """Group rows by their `Report <name>`, in the order Appendix A numbers them.
+
+    Shared by the CAMSTAR XML and the PDF so the two can never disagree about
+    test order. Rows with no `report_test` (station fixtures such as Input
+    Connection Check) are left out — the report lists UUT tests only.
+
+    Ordering is pinned to the spec rather than taken from the order rows were
+    recorded. Row order is not a reliable proxy: the Polarity Check row is
+    appended by an engine gate in `TestRunnerThread`, not by a script step, so
+    its position depends on where that gate happens to fire. It currently fires
+    after the LED step and so lands correctly, but the fallback path taken when
+    a run has no LED step records it first, and any future change to the gate
+    would silently reorder customer-facing output. Sorting here makes the spec
+    order an invariant of the report instead of an accident of the engine.
+
+    Tests absent from the spec's section list keep their first-seen order after
+    the known ones, so a non-spec product still renders.
+    """
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in results:
+        name = str(row.get("report_test", "")).strip()
+        if name:
+            grouped.setdefault(name, []).append(row)
+
+    spec_order = list(DEFAULT_PDF_TEMPLATE.get("test_sections", {}))
+    return sorted(
+        grouped.items(),
+        key=lambda kv: (
+            spec_order.index(kv[0]) if kv[0] in spec_order else len(spec_order),
+        ),
+    )
 
 
 def _fmt(value: Any) -> str:
@@ -121,6 +158,11 @@ def template_values(run_meta: dict[str, Any]) -> dict[str, str]:
         "test_load_model": TEST_LOAD_MODEL,
         "tester_serial": TESTER_SERIAL_NUMBER,
         "software_version": __version__,
+        # "17 / 20 (partial)" when a role with SELECT_STEPS unticked steps
+        # before the run; blank when the whole script ran. Deselected steps
+        # leave no N/A row, so without this a reduced run would be
+        # indistinguishable from a full pass on the report.
+        "steps_executed": str(run_meta.get("steps_executed", "")),
     }
 
 
@@ -130,16 +172,10 @@ def build_tests_element(results: list[dict[str, Any]]) -> ET.Element:
     Generated rather than templated: its shape follows what the run measured,
     and it must stay valid for CAMSTAR regardless of template edits.
     """
-    # Group by logical test, preserving first-appearance order: dict insertion
-    # order follows script order, which is the order the customer expects.
-    by_test: dict[str, list[dict[str, Any]]] = {}
-    for row in results:
-        name = str(row.get("report_test", "")).strip()
-        if name:
-            by_test.setdefault(name, []).append(row)
-
     tests_el = ET.Element("Tests")
-    for test_name, rows in by_test.items():
+    # Ordered by the spec's test numbering, not by the order rows were recorded
+    # — see `group_by_report_test` for why row order cannot be trusted here.
+    for test_name, rows in group_by_report_test(results):
         test_el = ET.SubElement(tests_el, "Test")
         ET.SubElement(test_el, "TestName").text = test_name
 
