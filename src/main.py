@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -76,5 +77,28 @@ def main() -> int:
         lock.release()
 
 
+def _exit_now(code: int) -> None:
+    """Terminate the process, even if a non-daemon thread is still blocked.
+
+    `sys.exit` only unwinds the main thread; the interpreter then waits for
+    every non-daemon thread before the process actually dies. A runner thread
+    stuck on an operator prompt therefore kept the whole application alive and
+    invisible after the window closed — still holding the single-instance lock
+    (so the app would not start again) and, in a hardware run, the
+    instrument's one TCP slot.
+
+    The blocking waits are fixed at the source in `test_engine`, so this is a
+    backstop rather than the cure. It runs only after the normal shutdown has
+    completed — `MainWindow.closeEvent` has already stopped the threads,
+    released the load and flushed the reports — so nothing is cut short here
+    that was not already finished or already hung.
+    """
+    sys.stdout.flush()
+    sys.stderr.flush()
+    # os._exit skips interpreter teardown, which is exactly the point: teardown
+    # is what blocks on the stuck thread.
+    os._exit(code)
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    _exit_now(main())

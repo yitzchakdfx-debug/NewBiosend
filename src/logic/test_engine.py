@@ -67,6 +67,9 @@ _CONNECT_RETRY_BUDGET_S = 8.0
 # Pause between connect attempts. The load needs a moment after its link comes
 # back, so a tight loop would only produce more failures.
 _CONNECT_RETRY_DELAY_S = 1.0
+# Slice length for the operator-prompt wait. Short enough that closing the app
+# is not perceptibly delayed, long enough to cost nothing while idling.
+_OPERATOR_PROMPT_POLL_S = 0.2
 
 # Settling time between switching the load off and reading the polarity voltage.
 # Spec §1.1.7.1 specifies 3 seconds for this test.
@@ -161,7 +164,20 @@ class TestRunnerThread(QThread):
         self._logical_script_name = logical_script_name.strip() or self._script_path.stem
         self._selected_names = set(selected_names)
         self._loop_count = max(1, loop_count)
-        self._stop_on_fail = stop_on_fail
+        # Spec Rev.1.1 §1.1.4.5: "the system shall proceed to the next test only
+        # if the previous test has passed. If any test fails ... all subsequent
+        # tests shall not be performed and shall be marked as N/A." That is not
+        # optional in production, so the caller's flag can only ever *add*
+        # stopping, never remove it. It used to be honoured as given, and the
+        # "Stop on fail" checkbox ships unticked — meaning the shipped default
+        # violated the clause for any step that was not marked `Critical`.
+        #
+        # This changes nothing for `biosend_test.tst`, where every step carrying
+        # pass/fail limits is already Critical; it closes the hole for any
+        # future script whose author omits the keyword. The checkbox survives as
+        # a Maintenance-mode control, where a diagnostic run legitimately wants
+        # to continue past a failing step.
+        self._stop_on_fail = stop_on_fail or production_flow
         self._script_manager = script_manager or ScriptManager()
         self._hw: BaseDriver = driver or create_driver()
         self._hw_lock: Lock | None = hw_lock
@@ -173,6 +189,10 @@ class TestRunnerThread(QThread):
         self._production_flow: bool = production_flow
         self._persist_runs: bool = persist_runs
         self._stop_requested = False
+        # Set once the script is parsed; 0 until then so an early-abort report
+        # simply omits the coverage line rather than claiming "0 / 0".
+        self._steps_selected: int = 0
+        self._steps_available: int = 0
         self._prompt_event: Event = Event()
         self._yesno_event: Event = Event()
         self._yesno_answer: bool = False
@@ -287,6 +307,23 @@ class TestRunnerThread(QThread):
                 self._emit_log("info", "No steps selected to run.")
                 return
 
+            # Record how much of the script this run covers, so a report can
+            # disclose a partial selection. Hidden setup/teardown steps are
+            # excluded from both counts: they are machinery, not test criteria,
+            # and counting them would make a full run read as "17 / 20".
+            self._steps_available = sum(
+                1 for s in doc.steps if not getattr(s, "hidden", False)
+            )
+            self._steps_selected = sum(
+                1 for s in steps if not getattr(s, "hidden", False)
+            )
+            if self._steps_selected < self._steps_available:
+                self._emit_log(
+                    "info",
+                    f"Partial run: {self._steps_selected} of "
+                    f"{self._steps_available} tests selected.",
+                )
+
             total_units = len(self._batch_units)
 
             for unit_index, unit in enumerate(self._batch_units, start=1):
@@ -398,6 +435,8 @@ class TestRunnerThread(QThread):
                 uut_type=self.uut_type,
                 test_program_name=self._logical_script_name,
                 overall_result="FAIL",
+                steps_selected=self._steps_selected,
+                steps_available=self._steps_available,
             )
 
         if self._production_flow and not self._check_input_connection(record, unit):
@@ -411,6 +450,8 @@ class TestRunnerThread(QThread):
                 uut_type=self.uut_type,
                 test_program_name=self._logical_script_name,
                 overall_result="FAIL",
+                steps_selected=self._steps_selected,
+                steps_available=self._steps_available,
             )
 
         # Steps marked `Always` are teardown steps (e.g. a final loadoff). They
@@ -450,6 +491,8 @@ class TestRunnerThread(QThread):
                     overall_result="FAIL",
                     alert_message=msg,
                     should_generate_report=False,
+                    steps_selected=self._steps_selected,
+                    steps_available=self._steps_available,
                 )
 
         total_steps = len(normal_steps) * self._loop_count
@@ -604,6 +647,8 @@ class TestRunnerThread(QThread):
             uut_type=self.uut_type,
             test_program_name=self._logical_script_name,
             overall_result="PASS" if record.overall_passed else "FAIL",
+            steps_selected=self._steps_selected,
+            steps_available=self._steps_available,
         )
 
     def _check_input_connection(self, record: TestRunRecord, unit: BatchUnit) -> bool:
@@ -1082,13 +1127,25 @@ class TestRunnerThread(QThread):
             return None
 
         if name == "prompt":
+            # Check *after* clearing, not before: `stop()` may have set the
+            # event in the gap between the check and the clear, and clearing
+            # would then discard the only wake-up this thread will ever get.
             self._prompt_event.clear()
+            if self._stop_requested:
+                return None
             self.prompt_request.emit(" ".join(args))
-            self._prompt_event.wait()
+            self._wait_for_operator(self._prompt_event)
             return None
 
         if name == "promptyesno":
             self._yesno_event.clear()
+            # Same race as above. Losing this wake-up is what left the process
+            # alive with an invisible window after the operator closed the app
+            # while a prompt was pending: the runner blocked forever on an
+            # answer that could no longer arrive, and Python will not exit
+            # while a non-daemon QThread is still running.
+            if self._stop_requested:
+                return None
             self._yesno_answer = False
             msg = " ".join(args)
             if self._current_unit is not None:
@@ -1097,7 +1154,7 @@ class TestRunnerThread(QThread):
                     f" — {self._current_unit.position_label}]\n\n{msg}"
                 )
             self.prompt_yesno_request.emit(msg)
-            self._yesno_event.wait()
+            self._wait_for_operator(self._yesno_event)
             answer_val = 1.0 if self._yesno_answer else 0.0
             self._emit_log(
                 "info",
@@ -1123,6 +1180,24 @@ class TestRunnerThread(QThread):
 
     def resume_pause(self) -> None:
         self._pause_event.set()
+
+    def _wait_for_operator(self, event: Event) -> None:
+        """Block until the operator answers, or until the run is stopped.
+
+        An operator prompt has no time limit — a technician may reasonably take
+        minutes over the LED check — so this waits indefinitely by design. What
+        it must never do is outlive the application: a bare `event.wait()`
+        cannot notice `stop()` if the set/clear ordering goes against it, and a
+        non-daemon QThread stuck here keeps the whole interpreter alive after
+        the window has closed, leaving an invisible process holding the
+        instrument and the single-instance lock.
+
+        Polling in short slices rather than waiting outright means the stop
+        flag is honoured within one slice no matter how the race falls.
+        """
+        while not self._stop_requested:
+            if event.wait(timeout=_OPERATOR_PROMPT_POLL_S):
+                return
 
     def stop(self) -> None:
         self._stop_requested = True
