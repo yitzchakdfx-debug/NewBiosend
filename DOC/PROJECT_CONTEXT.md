@@ -211,6 +211,15 @@ steps contain no LED check — a partial Maintenance selection, or a product who
 script has none — the gate runs up front instead, because polarity must still be
 verified before a load is switched on.
 
+The operator answers through `ui/views/led_check_dialog.py`, which presents the
+**Pass / Fail checkboxes** spec §1.1.6.3 names verbatim ("check the 'Pass'
+Checkbox … check the 'Fail' Checkbox"). Neither box is pre-ticked, the two are
+mutually exclusive, OK stays disabled until one is chosen, and the dialog cannot
+be dismissed — that is how §1.1.4.2's "the subsequent DC Load tests will not be
+permitted to proceed" is enforced at the GUI. Other `PromptYesNo` steps still
+use a plain Yes/No box; the checkbox requirement is specific to the LED test.
+`MainWindow._is_led_prompt` routes between the two on the prompt text.
+
 `_check_polarity` performs its own `loadoff` + 3 s settle (`_POLARITY_SETTLE_MS`)
 before reading, as §1.1.7.1 requires. It does not rely on a script step for
 that: the gate now runs at a point the script does not control. The script
@@ -471,16 +480,44 @@ LOAD_RESISTANCE_50W_OHM   # 12.5 — legacy scripts still named "50W"
 |---|---|
 | §1.1.4.3 Maintenance role, single-scenario execution, **no reports** | `logic/roles.py`; `MainWindow._on_run_single_step`; gates in `_finalize_run_reports`, `ReportGenerator`, and `TestRunnerThread(persist_runs=…)` |
 | §1.1.4.4 Note 1 — admin-updatable XML template | `logic/report_templates.py` + `ui/views/report_templates_dialog.py` |
-| §1.1.4.4 Note 2 — admin-updatable PDF template | same; consumed by `write_pdf_report` |
+| §1.1.4.4 Note 2 — admin-updatable PDF template, changes reflected in the report | same; consumed by `write_pdf_report`, which calls `read_pdf_template()` per report so a save applies to the next report with no restart. Verified by mutating each field with a unique token and inspecting the rendered flowables: `title`, `subtitle`, `header_fields`, `detail_columns` and `test_sections` all propagate. `summary_columns` is **CSV-only** and deliberately does not — the PDF always uses `detail_columns` because Appendix A requires the measured values regardless of the operator's role |
 | §1.1.4.5 failed test → later tests **N/A** | `skipped` flag carried through `BatchUnitReport.rows()`; `N/A` in PDF/CSV and empty `<Value/>` in XML |
-| §1.1.7.1 Polarity = voltage readback, load OFF | `biosend_test.tst` `:Polarity Check Setup` (`loadoff`) + `Delay 3000`; the engine's `_check_polarity` gate |
+| §1.1.4.5 "proceed only if the previous test has passed" | `TestRunnerThread.__init__`: `self._stop_on_fail = stop_on_fail or production_flow`. A production run **always** halts on the first failure — the caller's flag can add stopping, never remove it. Previously it was honoured as given and the "Stop on fail" checkbox ships unticked, so any step lacking the `Critical` keyword continued after a failure. The checkbox now only matters in Maintenance, where continuing past a failure is a legitimate diagnostic |
+| §1.1.4.3 no configuration privileges for production roles | A role with `SELECT_STEPS` can untick steps, and deselected steps are filtered before execution so they leave no `N/A` row. `BatchUnitReport.step_coverage()` records `"17 / 20 (partial)"` into `meta["steps_executed"]`, surfaced as the PDF's "Tests Executed" header field and the `{{steps_executed}}` XML placeholder, so a reduced run can never read as a full pass. Omitted from the PDF when the run was full |
+| §1.1.7.1 Polarity = voltage readback, load OFF | the engine's `_check_polarity` gate, which issues its own `loadoff` and waits `_POLARITY_SETTLE_MS` (3 s) immediately before reading — not a script step, so the load-off and settle cannot be reordered away from the measurement |
 | §1.1.7.2 Low Load 100 W @ **5.76 Ω**, monitored for the full minute | `:Low Load 100W Setup` `setresistance 5.76`; `Delay 60000 22.8 25.2` |
 | §1.1.7.3 Burn-In @ **2.0 Ω**, monitored across 30 min, t1/t2/t3 | `:Burn-In 300W Setup` `setresistance 2.0`; `Delay <ms> 22.8 25.2` on each voltage step |
 | §1.1.7.2/3 Note 2 — adjustable duration, limits, resistance | `ui/views/limits_editor_dialog.py` (Delay / Low / High / Value columns) |
 | Appendix A — Resistance recorded for Low Load and all Burn-In points | `Resistance Measurement` steps using `getresistance` |
 | Appendix B — exact nested XML | `logic/report_xml.py` + the `Report`/`Quantity`/`Measurement`/`TimePoint` directives |
+| Appendix A test numbering (LED 1, Polarity 2, Low Load 3, Burn-In 4) | `report_xml.group_by_report_test()` — one spec-pinned ordering shared by the XML and the PDF. Deliberately not derived from row order: the Polarity row comes from an engine gate, not a script step, so its recorded position depends on where that gate fires |
 
 ---
+
+## Shutdown must never depend on an operator answer
+
+Closing the app while a `PromptYesNo` was pending used to leave the process
+alive with an invisible window, holding the single-instance lock (so it would
+not restart) and, in a hardware run, the instrument's one TCP slot. Two causes,
+both fixed:
+
+1. **A set/clear race.** `_execute_command` cleared the prompt event *before*
+   waiting. If `stop()` set it during the gap between the check and the clear,
+   the clear discarded the only wake-up the runner would ever get. Both prompt
+   branches now re-check `_stop_requested` *after* clearing.
+2. **An unbounded wait.** `Event.wait()` with no timeout cannot notice a stop
+   flag if the ordering goes against it. `_wait_for_operator` polls in
+   `_OPERATOR_PROMPT_POLL_S` (0.2 s) slices instead, so the flag is honoured
+   within one slice however the race falls. Prompts still wait indefinitely for
+   the operator — that is intended; a technician may take minutes over the LED
+   check.
+
+`main._exit_now` is the backstop: `sys.exit` only unwinds the main thread and
+the interpreter then waits for every non-daemon thread, so one stuck QThread
+strands the process. It runs after `closeEvent` has already stopped the threads,
+released the load and flushed the reports, so nothing unfinished is cut short.
+The Windows single-instance mutex is released by the OS on process death, so
+skipping teardown does not leak it.
 
 ## Architectural rules (short form)
 

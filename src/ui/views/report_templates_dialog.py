@@ -154,7 +154,12 @@ class ReportTemplatesDialog(QDialog):
                 "optional logo, which header fields appear and in what order, and "
                 "the results columns. <code>header_fields</code> and the column "
                 "lists are <code>[label, field]</code> pairs: the label is free "
-                "text, the field must be a known name."
+                "text, the field must be a known name.<br>"
+                "The PDF results table always uses <code>detail_columns</code>, so "
+                "the archived report keeps its measured values whoever ran the "
+                "test. <code>summary_columns</code> affects <b>CSV export only</b>, "
+                "for roles that may not view measured detail — editing it will not "
+                "change the PDF."
             ),
             text=json.dumps(read_pdf_template(), indent=2),
             default_text=json.dumps(DEFAULT_PDF_TEMPLATE, indent=2),
