@@ -69,13 +69,14 @@ To ensure operational safety on the production floor, the system uses strict Rol
 1. Install required dependencies:
 
    ```bash
-   pip install PySide6 reportlab pypdf2 pyserial
+   pip install -r requirements.txt
    ```
 
-2. Launch the application:
+2. Launch the application (use the project venv's interpreter, so `python-dotenv`
+   and PySide6 resolve):
 
-   ```bash
-   python src/main.py
+   ```powershell
+   .\venv\Scripts\python.exe src\main.py
    ```
 
 ### Default Credentials (Admin)
@@ -84,6 +85,56 @@ On first run the database is auto-initialized with a default administrator accou
 
 - **Username:** `lior`
 - **Password:** `XXXXXXX`
+
+These two values come from `DEFAULT_ADMIN_USERNAME` / `DEFAULT_ADMIN_PASSWORD` in
+`.env`, and they are **seed-only**: they create the first admin row and are then
+ignored forever (`_seed_admin` uses `INSERT OR IGNORE`). Editing them later has no
+effect — change credentials in the app, under **Admin > User Management**.
+
+---
+
+## Configuring a Deployed Station
+
+A packaged build is a folder, not a lone `.exe`. `build.ps1` copies `.env` **next
+to** `DFX_Tester.exe`, and the app resolves it from there (`paths._install_root()`),
+so a deployed station stays configurable:
+
+```
+dist\DFX_Tester\
+├── .env                 <- editable config (shipped by build.ps1)
+├── DFX_Tester.exe
+├── _internal\           <- runtime; do not edit
+└── data\                <- created on first launch: DB, reports, logs
+```
+
+**What to change where:**
+
+| Setting | Where | Applies |
+|---|---|---|
+| Users, passwords, roles | In-app: **Admin > User Management** | immediately |
+| Simulator ↔ Prodigit | In-app: **Admin > Connections** | next launch |
+| Electronic load address | In-app: **Admin > Connections** | next launch |
+| Test limits, durations, resistance | In-app: **Admin > Limits Editor** | next run |
+| Report templates (PDF/XML) | In-app: **Admin > Report Templates** | next report |
+| Everything else (secrets, VISA tuning) | `.env` beside the `.exe` | next launch |
+
+The Connections dialog writes to the database, which **overrides** `.env`. An
+untouched station therefore behaves exactly as its `.env` says; once an admin saves
+a backend or load address, that value wins. Only fields you actually change are
+written, and setting a field back to *Use .env default* (or clearing the address)
+removes the override — so `.env` never gets shadowed by simply opening the dialog.
+The backend is resolved once at startup, so a change applies on the next launch:
+the live monitor holds an open driver, the 3300G accepts a single TCP connection,
+and the shutdown load-off safety path must reach the same instrument the run used. `HARDWARE_BACKEND` accepts
+`prodigit`/`visa`/`usb` (real) or `mock`/`simulator`/`demo` (simulated) — anything
+else aborts startup with a message naming the legal values, rather than silently
+guessing.
+
+> **Note on secrets.** `.env` holds `LOG_ENCRYPTION_PASSWORD` and
+> `ADMIN_REPORT_PASSWORD` in cleartext beside the `.exe`. This is a deliberate
+> trade-off for shared factory-floor stations (see `CLAUDE.md`): anyone with file
+> access to the station can read the audit-log encryption key. Restrict access to
+> the install folder accordingly.
 
 ---
 
@@ -96,7 +147,7 @@ A PyInstaller spec and build script are included:
 .\build.ps1
 ```
 
-The output `dist/DFX_Tester.exe` is self-contained. Writable data (database, logs, reports) is stored next to the `.exe`; bundled read-only assets are unpacked to `sys._MEIPASS` at runtime.
+The output is the **folder** `dist/DFX_Tester/` (onedir, not a single file — onefile builds trip antivirus heuristics; see the comment in `build.ps1`). Ship the whole folder. Writable data (database, logs, reports) is stored next to the `.exe`; bundled read-only assets are unpacked to `sys._MEIPASS` at runtime. See **Configuring a Deployed Station** above for what an admin can change on an installed station.
 
 ---
 

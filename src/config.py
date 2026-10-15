@@ -50,7 +50,33 @@ LOAD_RESISTANCE_300W_OHM: str = get_str("LOAD_RESISTANCE_300W_OHM", "2.0")
 TEST_LOAD_MODEL: str = get_str("TEST_LOAD_MODEL", "3316G")
 
 # --- Hardware backend ---
+# The station is either fully real or fully simulated, and every component must
+# agree: the 3300G accepts only ONE TCP connection, so a split decision means the
+# test runner and the live monitor compete for it and one fails as a phantom
+# comms fault -- or worse, one polls a simulator down the real-hardware path and
+# reports invented numbers as measurements.
+#
+# This module holds only the `.env` baseline. It deliberately exposes no
+# "is simulated" boolean: an Admin override lives in the database, which `config`
+# must not read (`logic.database_manager` imports this module, so the dependency
+# would be circular). Ask `drivers.factory.is_simulated()` for the effective
+# value -- that is the single authority, and it is re-resolved per call so a
+# cached copy cannot drift from the driver actually in use.
+
+#: Accepted `HARDWARE_BACKEND` values. Public so `drivers.factory` can validate
+#: the Admin-set database override against exactly the same vocabulary.
+REAL_BACKENDS = frozenset({"prodigit", "visa", "usb"})
+SIMULATED_BACKENDS = frozenset({"mock", "simulator", "demo"})
+
 HARDWARE_BACKEND: str = get_str("HARDWARE_BACKEND", "mock").strip().lower()
+if HARDWARE_BACKEND not in REAL_BACKENDS | SIMULATED_BACKENDS:
+    raise RuntimeError(
+        f"Invalid HARDWARE_BACKEND={HARDWARE_BACKEND!r}. "
+        f"Real hardware: {sorted(REAL_BACKENDS)}. "
+        f"Simulated: {sorted(SIMULATED_BACKENDS)}. "
+        "Set it in .env."
+    )
+
 PRODIGIT_VISA_RESOURCE: str = get_str("PRODIGIT_VISA_RESOURCE", "")
 PRODIGIT_VISA_BACKEND: str = get_str("PRODIGIT_VISA_BACKEND", "")
 PRODIGIT_VISA_TIMEOUT_MS: str = get_str("PRODIGIT_VISA_TIMEOUT_MS", "5000")

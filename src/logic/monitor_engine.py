@@ -29,6 +29,14 @@ class MonitorThread(QThread):
     unplugging and replugging the instrument recovers without a restart. There is
     no MockHardware fallback — inventing readings for a disconnected instrument
     is worse than showing zeros.
+
+    `simulate` is resolved live rather than captured at construction. It used to
+    be a constructor value while `_connect_driver` called `create_driver()`,
+    which re-reads the Admin backend override on every reconnect. After a
+    mid-session switch to the simulator the two disagreed: the factory handed
+    back a MockHardware while this thread still believed it was in real mode, so
+    it polled the mock down the real-hardware path and presented invented
+    numbers as genuine measurements. Both now ask the same authority.
     """
 
     values_updated = Signal(dict)
@@ -40,15 +48,38 @@ class MonitorThread(QThread):
         parent: object | None = None,
         *,
         interval_ms: int = 500,
-        simulate: bool = True,
+        simulate: bool | None = None,
     ) -> None:
         super().__init__(parent)
         self._interval_ms = max(1, interval_ms)
-        self._simulate = simulate
+        # None = follow the station's configured backend (the normal case).
+        # An explicit bool pins the mode, for tests that must not touch config.
+        self._simulate_override = simulate
         self._stop_requested = False
         self._paused = False
         self._driver = None
         self._driver_lock = threading.Lock()
+
+    @property
+    def _simulate(self) -> bool:
+        """Whether to synthesise readings instead of polling hardware.
+
+        Asks `drivers.factory`, the same authority `create_driver()` uses, rather
+        than caching an answer of its own: a private copy taken at construction
+        is what previously let this thread believe it was in real mode while the
+        factory handed it a MockHardware, polling the mock down the real-hardware
+        path and reporting invented numbers as measurements.
+
+        Cheap despite being read twice per poll — the factory resolves the
+        backend once per process and caches it, so this costs a dict lookup after
+        the first call. Imported lazily because `drivers.factory` reaches the
+        database, and this module is imported before one is guaranteed to exist.
+        """
+        if self._simulate_override is not None:
+            return self._simulate_override
+        from drivers.factory import is_simulated
+
+        return is_simulated()
 
     # ------------------------------------------------------------------
     # Public control API (called from the main thread)

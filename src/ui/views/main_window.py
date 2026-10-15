@@ -38,9 +38,9 @@ from PySide6.QtWidgets import (
 
 import threading
 
-from config import HARDWARE_BACKEND, SHOW_LIVE_MONITOR, SHOW_NIGHT_MODE, SHOW_SEARCH_BAR
+from config import SHOW_LIVE_MONITOR, SHOW_NIGHT_MODE, SHOW_SEARCH_BAR
 from drivers.base_driver import BaseDriver, HardwareError
-from drivers.factory import create_driver
+from drivers.factory import create_driver, resolve_station_config
 from logic.database_manager import DatabaseManager
 from ui.report_worker import ReportWorker
 from logic.models import ScriptDocument, TestResultPayload
@@ -129,9 +129,18 @@ class MainWindow(QMainWindow):
         # One entry per in-flight report. A list rather than a single slot so a
         # parallel run's workers cannot overwrite each other's reference.
         self._report_workers: list[ReportWorker] = []
+        # Pin the station's hardware config now, while the window is opening and
+        # before the admin can reach the Connections dialog. The factory caches on
+        # first read, so without this the first read could happen *after* a
+        # mid-session save — and the whole point of caching is that the backend and
+        # load address the shutdown `loadoff` path sees are the ones the run used.
+        # Not left to the monitor: it is gated on SHOW_LIVE_MONITOR.
+        resolve_station_config()
         self._setup_ui()
         if SHOW_LIVE_MONITOR:
-            self.monitor_thread = MonitorThread(parent=self, simulate=(HARDWARE_BACKEND == "mock"))
+            # No `simulate=` argument: the thread resolves the backend itself, so
+            # it cannot drift from the driver `create_driver()` hands it.
+            self.monitor_thread = MonitorThread(parent=self)
             self.monitor_thread.values_updated.connect(self.instrument_panel.update_values)
             # The monitor reconnects by itself while disconnected; say so when it
             # succeeds, so an operator who replugged a cable knows the station is
@@ -1285,6 +1294,7 @@ class MainWindow(QMainWindow):
             script_manager=self._script_manager,
             start_time=started,
             logical_script_name=logical_script_name,
+            persist_runs=self._can(Capability.ARCHIVE_RUN),
         )
         self._wire_test_thread_signals(self.test_thread)
 
@@ -1729,6 +1739,7 @@ class MainWindow(QMainWindow):
                 driver=shared_driver,
                 hw_lock=hw_lock,
                 skip_hw_lifecycle=True,
+                persist_runs=self._can(Capability.ARCHIVE_RUN),
             )
             th.log_msg.connect(self.append_trace)
             th.test_result.connect(self.update_results_table)

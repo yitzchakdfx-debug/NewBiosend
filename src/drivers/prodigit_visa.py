@@ -174,6 +174,7 @@ class ProdigitVisaDriver(BaseDriver):
         timeout_ms: float | None = None,
         probe_identity: bool = True,
         reconnect_on_error: bool = True,
+        resource_name: str | None = None,
     ) -> None:
         self._ctx: _VISAContext | None = None
         self._reconnecting = False
@@ -191,7 +192,16 @@ class ProdigitVisaDriver(BaseDriver):
             else int(_parse_float(PRODIGIT_VISA_TIMEOUT_MS, 5000))
         )
         self._probe_identity = probe_identity
-        self._resource_name = PRODIGIT_VISA_RESOURCE.strip()
+        # Resolved by the caller (`drivers.factory`) so the Admin's Connections
+        # setting can override `.env`. `drivers.factory.create_driver` is the only
+        # caller today; the `.env` fallback keeps a direct construction (a test,
+        # a future bench script) pointed at the configured instrument rather than
+        # silently at auto-discovery.
+        self._resource_name = (
+            resource_name.strip()
+            if resource_name is not None
+            else PRODIGIT_VISA_RESOURCE.strip()
+        )
         self._backend = PRODIGIT_VISA_BACKEND.strip() or None
         self._read_term = PRODIGIT_VISA_READ_TERM
         self._write_term = PRODIGIT_VISA_WRITE_TERM
@@ -218,8 +228,9 @@ class ProdigitVisaDriver(BaseDriver):
             resource_name = self._resource_name or self._auto_discover(rm)
             if not resource_name:
                 raise HardwareError(
-                    "No VISA resource found for Prodigit. "
-                    "Set PRODIGIT_VISA_RESOURCE in .env."
+                    "No VISA resource found for Prodigit. Set the electronic "
+                    "load's address in Admin > Connections, or "
+                    "PRODIGIT_VISA_RESOURCE in .env."
                 )
             resource = rm.open_resource(resource_name, open_timeout=self._timeout_ms)
             resource.timeout = self._timeout_ms

@@ -285,7 +285,13 @@ Now:
 * The pre-test scan reports "nothing detected" rather than mock-detecting all
   four channels.
 
-Demo mode remains available deliberately via `HARDWARE_BACKEND=mock`. It is
+Demo mode remains available deliberately via `HARDWARE_BACKEND=mock` (also
+`simulator`/`demo`; real hardware is `prodigit`/`visa`/`usb`, and any other
+value is rejected at startup by `config.py`). `drivers.factory.is_simulated()`
+is the single source both the driver factory and the live monitor consult, so they
+cannot disagree and contend for the 3300G's one TCP slot. It is resolved once per
+process and cached: a backend change applies on the next launch, which is what
+the Connections dialog promises. It is
 never an automatic consolation prize during a production run.
 
 `monitor_engine` had the same fallback and it mattered more than it looked: the
