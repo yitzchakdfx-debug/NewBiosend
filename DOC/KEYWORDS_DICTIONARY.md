@@ -90,7 +90,7 @@ The set of hardware commands recognized by `MockHardware.execute_command`:
 
 ## Hardware commands (Prodigit 3316G electronic load)
 
-Used by the production `biosend_test.tst`. See `drivers/prodigit_visa.py`; each
+Used by the production `biosense_test.tst`. See `drivers/prodigit_visa.py`; each
 maps to a SCPI template that is itself overridable from `.env`.
 
 | Command         | Kind        | Syntax                    | Notes                                                                          |

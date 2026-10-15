@@ -1,6 +1,6 @@
-# biosend_test_5v.tst
+# biosense_test_5v.tst
 # 5V Power Supply — Low-Load Sanity Test
-# Same structure as biosend_test.tst but scaled down for safe bench testing.
+# Same structure as biosense_test.tst but scaled down for safe bench testing.
 #
 # Voltage target : 5VDC
 # Low load  (~5W)  : CR mode, R = 5.00 Ohm  (5V^2 / 5W  = 5.00 Ohm)

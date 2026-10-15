@@ -83,7 +83,7 @@ DEFAULT_PDF_TEMPLATE: dict[str, Any] = {
         # template maps `<ProductName>` to `uut_type` (report_template.xml). This
         # row used to carry `test_program_name` — the test script and version —
         # so the same run reported "Power main" in the XML and
-        # "biosend_test V1.0" in the PDF for a field the customer cross-checks
+        # "biosense_test V1.0" in the PDF for a field the customer cross-checks
         # between the two. The script/version is still useful traceability, so it
         # keeps its own row under a label that says what it is.
         ["Product Name", "uut_type"],

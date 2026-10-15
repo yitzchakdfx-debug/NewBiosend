@@ -135,7 +135,7 @@ DB stores full Min/Max always — visibility gating is visual only.
 
 ## Default script and report conformance (Rev.1.1)
 
-`biosend_test.tst` is the **default** script (`main_window._DEFAULT_SCRIPT_NAME`,
+`biosense_test.tst` is the **default** script (`main_window._DEFAULT_SCRIPT_NAME`,
 seeded via `paths._SEED_FILES`). It is the only sequence that satisfies the
 spec: CR mode, 5.76 Ω / 2.0 Ω, load off before the polarity check, monitored
 delays, `Critical` measurement steps, and the `Report` / `Quantity` /
@@ -148,7 +148,7 @@ Three consequences worth knowing:
 * **The CAMSTAR XML has no fallback.** `write_xml_report` raises
   `XmlMappingMissingError` when a script declares no `Report` directives,
   instead of silently emitting a flat document CAMSTAR rejects. Only
-  `biosend_test.tst` carries them today; every other `.tst` will raise. The
+  `biosense_test.tst` carries them today; every other `.tst` will raise. The
   error names the script and lists the directives to add. `ReportWorker` reports
   this on a dedicated `xml_failed` signal so a missing MES file is never
   mistaken for a successful export — the PDF still archives.
@@ -339,7 +339,7 @@ A UUT must never be left dissipating test power. Four layers, because each one
 alone has a hole:
 
 1. **The script's `Always` teardown** (`:Cleanup` / `loadoff` in
-   `biosend_test.tst`) runs even after a critical abort or a user stop. But most
+   `biosense_test.tst`) runs even after a critical abort or a user stop. But most
    `.tst` files in `data/` declare no `Always` step at all.
 2. **The engine's `finally`.** `_run_single_unit` wraps the whole per-unit run
    and calls `_force_load_off` on the way out. This is the layer that matters:

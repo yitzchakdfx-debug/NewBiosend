@@ -1,4 +1,4 @@
-# biosend_test.tst
+# biosense_test.tst
 # Power Supply EM-5406-00F / EM-5406-00 Load Test
 # Based on: "Automatic Power Supply Test – Specification.pdf"
 # PartNum: EM-5406-00

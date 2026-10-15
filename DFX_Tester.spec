@@ -41,7 +41,7 @@ datas = [
     # look right but whose load and durations are not (see the deleted
     # biosend_test_TEMP.tst, which "passed" a 300 W / 30 min burn-in in 30 s at
     # ~6 W). Admins can still import other versions through the Version Manager.
-    (str(SRC / "data" / "biosend_test.tst"), "data"),
+    (str(SRC / "data" / "biosense_test.tst"), "data"),
 ]
 
 # Force-include cryptography backends — they are lazy imports that

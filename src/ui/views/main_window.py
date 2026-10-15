@@ -72,7 +72,7 @@ from version import __version__
 # directives the CAMSTAR XML is built from. Previously this pointed at
 # `sequence.tst`, a 5 V demo unrelated to the spec, so an operator who did not
 # load a script explicitly ran the wrong test.
-_DEFAULT_SCRIPT_NAME = "biosend_test.tst"
+_DEFAULT_SCRIPT_NAME = "biosense_test.tst"
 _NA = "-"
 
 

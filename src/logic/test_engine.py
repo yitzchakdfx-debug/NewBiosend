@@ -190,7 +190,7 @@ class TestRunnerThread(QThread):
         # "Stop on fail" checkbox ships unticked — meaning the shipped default
         # violated the clause for any step that was not marked `Critical`.
         #
-        # This changes nothing for `biosend_test.tst`, where every step carrying
+        # This changes nothing for `biosense_test.tst`, where every step carrying
         # pass/fail limits is already Critical; it closes the hole for any
         # future script whose author omits the keyword. The checkbox survives as
         # a Maintenance-mode control, where a diagnostic run legitimately wants
