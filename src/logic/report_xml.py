@@ -24,6 +24,7 @@ from logic.report_templates import (
     TESTS_PLACEHOLDER,
     TemplateError,
     ensure_templates_seeded,
+    read_pdf_template,
     read_xml_template,
     substitute,
     validate_xml_template,
@@ -77,7 +78,21 @@ def group_by_report_test(
         if name:
             grouped.setdefault(name, []).append(row)
 
-    spec_order = list(DEFAULT_PDF_TEMPLATE.get("test_sections", {}))
+    # Read the admin's saved template, not the hardcoded default. Spec §1.1.4.4
+    # Note 2 requires template edits to be reflected in the generated report;
+    # reading DEFAULT_PDF_TEMPLATE here meant a reordered or newly added test
+    # section was accepted, validated and audit-logged, then silently ignored.
+    # `read_pdf_template()` merges over the defaults, so the shipped spec order
+    # still applies when the admin has not touched the section list -- the
+    # invariant described above is preserved, it just stops being unoverridable.
+    # `or DEFAULT_PDF_TEMPLATE[...]` matches `report_generator._column_pairs`:
+    # `validate_pdf_template` accepts an empty or absent `test_sections`, and
+    # without the fallback every test would sort to key 0 and the report would
+    # silently revert to row-insertion order -- printing Burn-In as "Test 1".
+    sections = read_pdf_template().get("test_sections") or DEFAULT_PDF_TEMPLATE[
+        "test_sections"
+    ]
+    spec_order = list(sections)
     return sorted(
         grouped.items(),
         key=lambda kv: (

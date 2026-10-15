@@ -79,8 +79,15 @@ DEFAULT_PDF_TEMPLATE: dict[str, Any] = {
         ["Result (Overall)", "overall_result"],
         ["User Name", "tester_name"],
         ["Employee ID", "employee_id"],
-        ["Product Name", "test_program_name"],
-        ["UUT Type", "uut_type"],
+        # Spec Rev.1.1 §2.1.2 names one "Product Name" field, and the CAMSTAR
+        # template maps `<ProductName>` to `uut_type` (report_template.xml). This
+        # row used to carry `test_program_name` — the test script and version —
+        # so the same run reported "Power main" in the XML and
+        # "biosend_test V1.0" in the PDF for a field the customer cross-checks
+        # between the two. The script/version is still useful traceability, so it
+        # keeps its own row under a label that says what it is.
+        ["Product Name", "uut_type"],
+        ["Test Program", "test_program_name"],
         ["PartNumber", "part_number"],
         ["SN", "serial_number"],
         ["Test Load 3316G Channel ID (SN)", "load_channel_id"],

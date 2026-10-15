@@ -368,6 +368,64 @@ class LimitsEditorDialog(QDialog):
         """Warn that clearing limits also removed a step's continuous monitoring."""
         self._monitor_dropped.append(step_name)
 
+    def _resync_time_points(self) -> None:
+        """Recompute every `TimePoint` caption from the delays that precede it.
+
+        `TimePoint 5 min` is only the label printed in the PDF/XML; `Delay` is
+        what actually elapses. Nothing tied them together, so editing a duration
+        here used to leave the old caption in place and ship a report claiming a
+        measurement was taken at a time it was not.
+
+        Delays are cumulative *within a test* -- Burn-In waits 5 min, then 10
+        more, then 15 more, to land on t=5/15/30 -- so a step's time point is the
+        running total of the delays since its own test began. The accumulator
+        therefore resets on each new `Report` test: the spec's time points are
+        measured from the start of that test, so the Low Load test's 1 minute
+        must not push Burn-In's first point to t=6.
+
+        Only steps that already declare a `TimePoint` are touched: the directive
+        is what marks a step as a reported measurement point, and inventing one
+        would add rows to the CAMSTAR XML. The existing unit is preserved, and a
+        unit this method cannot convert is left alone rather than guessed at.
+
+        Only delays on steps that belong to the reported test are counted. A
+        settle or teardown wait sitting between two measurement points carries no
+        `Report`, and counting it inflated every later caption (a 30 s settle
+        turned `TimePoint 15` into `15.5`) -- the spec's time points are measured
+        against the test's own timeline, not the station's wall clock. Likewise
+        only the first `Delay` on a step counts, matching `_build_rows`, which
+        binds the Delay column to that one: a second delay on the same step has
+        no cell in the grid, so counting it would put a number in the report that
+        the admin cannot see or change.
+        """
+        _MS_PER = {"ms": 1.0, "s": 1000.0, "sec": 1000.0, "min": 60000.0, "hr": 3600000.0}
+        elapsed_ms = 0.0
+        current_test: str | None = None
+        for step in self._all_steps:
+            test_name = (step.report_test or "").strip()
+            if test_name and test_name != current_test:
+                current_test = test_name
+                elapsed_ms = 0.0
+            if test_name:
+                for cmd in step.commands:
+                    if str(cmd.get("cmd", "")).strip().lower() == "delay":
+                        args = cmd.get("args") or []
+                        if args:
+                            try:
+                                elapsed_ms += float(args[0])
+                            except (TypeError, ValueError):
+                                pass
+                        break
+            if not step.report_time:
+                continue
+            per = _MS_PER.get(step.report_time_uom.strip().lower())
+            if per is None or per <= 0:
+                continue
+            value = elapsed_ms / per
+            # Whole numbers stay whole ("5 min", not "5.0 min"); anything else
+            # keeps enough precision to stay honest about an odd duration.
+            step.report_time = f"{value:g}" if value % 1 else str(int(value))
+
     def _get_text(self, row: int, col: int) -> str:
         it = self._table.item(row, col)
         if it is None:
@@ -382,6 +440,7 @@ class LimitsEditorDialog(QDialog):
     def _validate_and_apply_table(self) -> bool:
         """Read table cells back into self._all_steps. Returns False on error."""
         self._monitor_dropped: list[str] = []
+        delays_changed = False
         for row, rd in enumerate(self._rows):
             step = self._all_steps[rd.step_idx]
 
@@ -470,6 +529,8 @@ class LimitsEditorDialog(QDialog):
                     return False
                 args = step.commands[rd.delay_cmd_idx]["args"]
                 monitored = len(args) >= 3
+                if args and str(args[0]) != str(delay_ms):
+                    delays_changed = True
                 new_args = [str(delay_ms)]
                 if monitored and step.min_val is not None and step.max_val is not None:
                     new_args += [f"{step.min_val:g}", f"{step.max_val:g}"]
@@ -500,6 +561,14 @@ class LimitsEditorDialog(QDialog):
                 step.is_critical = (
                     crit_item.checkState() == Qt.CheckState.Checked
                 )
+
+        # Only when a duration actually moved. Running unconditionally meant
+        # merely opening the editor and pressing Save rewrote `report_time` on
+        # untouched steps -- committed as a new script version and audit-logged
+        # as a deliberate edit. Delays are final by this point, so one pass here
+        # is enough.
+        if delays_changed:
+            self._resync_time_points()
 
         if self._monitor_dropped:
             QMessageBox.warning(

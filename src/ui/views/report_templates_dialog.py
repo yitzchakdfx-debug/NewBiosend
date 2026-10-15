@@ -159,7 +159,10 @@ class ReportTemplatesDialog(QDialog):
                 "the archived report keeps its measured values whoever ran the "
                 "test. <code>summary_columns</code> affects <b>CSV export only</b>, "
                 "for roles that may not view measured detail — editing it will not "
-                "change the PDF."
+                "change the PDF.<br>"
+                "The order of <code>test_sections</code> sets the order the tests "
+                "appear in <b>both</b> the PDF and the CAMSTAR XML. Keep it in spec "
+                "order unless a product genuinely runs its tests in another order."
             ),
             text=json.dumps(read_pdf_template(), indent=2),
             default_text=json.dumps(DEFAULT_PDF_TEMPLATE, indent=2),

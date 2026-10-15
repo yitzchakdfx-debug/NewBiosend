@@ -398,6 +398,52 @@ class TestRunnerThread(QThread):
         finally:
             self._force_load_off(unit)
 
+    def _backfill_skipped(
+        self,
+        record: TestRunRecord,
+        unit: BatchUnit,
+        steps: list[TestStep],
+        loop_number: int = 1,
+    ) -> None:
+        """Record every not-yet-executed step as an N/A row.
+
+        Spec Rev.1.1 §1.1.4.5: when a run stops early, the tests that did not
+        run "shall not be performed and shall be marked as N/A in the test
+        report". The mid-run abort path did this, but the early returns (slot
+        activation, input-connection check, up-front polarity) returned with only
+        their own failure row.
+
+        That left the report missing the four spec tests entirely, and it also
+        broke the XML: `write_xml_report` decides whether a run can be mapped
+        onto Appendix B by looking for `report_test` on the *result rows*, so a
+        run with no rows was reported to the operator as "this script declares no
+        'Report' directives" — blaming a script that was in fact correct. These
+        rows carry `_report_fields(step)`, so the mapping is present and the XML
+        renders the tests as N/A.
+        """
+        executed = {r["test_name"] for r in record.results}
+        for step in steps:
+            if step.name in executed or getattr(step, "hidden", False):
+                continue
+            na_payload: TestResultPayload = {
+                "value": 0.0,
+                "min": 0.0,
+                "max": 0.0,
+                "unit": step.unit,
+                "passed": False,
+                "is_measurement": False,
+            }
+            self._emit_result(unit, step.name, na_payload)
+            record.results.append(
+                {
+                    "test_name": step.name,
+                    "loop": loop_number,
+                    "skipped": True,
+                    **self._report_fields(step),
+                    **dict(na_payload),
+                }
+            )
+
     def _run_single_unit_inner(
         self,
         unit: BatchUnit,
@@ -426,6 +472,7 @@ class TestRunnerThread(QThread):
             record.results.append(
                 self._result_row("Slot Activation", False, 0.0, 0.0, 0.0, "")
             )
+            self._backfill_skipped(record, unit, steps)
             self._save_record(record)
             return BatchUnitReport(
                 unit=unit,
@@ -441,6 +488,7 @@ class TestRunnerThread(QThread):
 
         if self._production_flow and not self._check_input_connection(record, unit):
             record.end_time = datetime.now()
+            self._backfill_skipped(record, unit, steps)
             self._save_record(record)
             return BatchUnitReport(
                 unit=unit,
@@ -480,6 +528,7 @@ class TestRunnerThread(QThread):
                 )
                 self.unit_alert.emit(msg)
                 record.end_time = datetime.now()
+                self._backfill_skipped(record, unit, normal_steps)
                 self._save_record(record)
                 return BatchUnitReport(
                     unit=unit,
@@ -607,27 +656,7 @@ class TestRunnerThread(QThread):
                 break
 
         if abort_loops:
-            executed_names = {r["test_name"] for r in record.results}
-            for step in normal_steps:
-                if step.name not in executed_names and not getattr(step, "hidden", False):
-                    na_payload: TestResultPayload = {
-                        "value": 0.0,
-                        "min": 0.0,
-                        "max": 0.0,
-                        "unit": step.unit,
-                        "passed": False,
-                        "is_measurement": False,
-                    }
-                    self._emit_result(unit, step.name, na_payload)
-                    record.results.append(
-                        {
-                            "test_name": step.name,
-                            "loop": loop_number,
-                            "skipped": True,
-                            **self._report_fields(step),
-                            **dict(na_payload),
-                        }
-                    )
+            self._backfill_skipped(record, unit, normal_steps, loop_number)
 
         # Teardown: always run `Always` steps, regardless of abort/stop, so the
         # load is turned off even when an earlier critical step failed.
@@ -887,6 +916,13 @@ class TestRunnerThread(QThread):
             )
 
     def _save_record(self, record: TestRunRecord) -> None:
+        # `persist_runs` is the Capability.ARCHIVE_RUN decision, made by the
+        # caller. Every construction site must pass it explicitly: it used to be
+        # supplied only on the single-step path, so a Maintenance user running a
+        # full sequence was correctly denied a PDF/XML but still wrote rows into
+        # the production `test_runs` table. Hiding the "Save as log" checkbox did
+        # not help -- a hidden box stays checked, and this method never consulted
+        # it. See roles.py: Maintenance deliberately lacks ARCHIVE_RUN.
         if not self._persist_runs:
             return
         try:

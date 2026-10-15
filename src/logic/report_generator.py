@@ -584,6 +584,21 @@ def write_xml_report(path: Path, run_meta: dict[str, Any], results: list[dict[st
     """
     if not has_report_mapping(results):
         script = str(run_meta.get("test_program_name") or "this script").strip()
+        # Distinguish "the script cannot be mapped" from "the run never reached a
+        # mappable step". Both leave `results` without a `report_test`, but the
+        # causes are unrelated and only the first is the script author's problem.
+        # Blaming the script for the second sent an operator to fix a correct
+        # `.tst` after what was really a comms failure.
+        if not any(str(r.get("test_name", "")).strip() for r in results):
+            raise XmlMappingMissingError(
+                "Cannot write the CAMSTAR XML report: the run stopped before any "
+                "test was performed, so there are no results to report. This is "
+                "usually a station fault rather than a script problem — check "
+                "that the electronic load is powered and reachable at the "
+                "configured address (Admin > Connections), or switch to the "
+                "Simulator backend to test without hardware. The script itself "
+                "was not the cause. The PDF report is unaffected."
+            )
         raise XmlMappingMissingError(
             f"Cannot write the CAMSTAR XML report: {script} declares no "
             "'Report' directives, so its results cannot be mapped onto the "
