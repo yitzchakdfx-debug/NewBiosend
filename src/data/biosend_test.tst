@@ -12,6 +12,10 @@
 #
 # The operator switches on the UUT and physically checks
 # that the green LED on the front panel is ON and STEADY.
+# The answer is given per unit in the pre-test dialog ("LED ON"
+# checkbox) before the run starts; this step then uses that answer
+# instead of prompting. A unit confirmed OFF there gets its FAIL
+# report and never enters the run.
 # Yes = 1.0 → within Limits 1.0 1.0 → PASS
 # No  = 0.0 → below  Limits 1.0 1.0 → FAIL → Critical stops all subsequent tests
 # ─────────────────────────────────────────────────────────

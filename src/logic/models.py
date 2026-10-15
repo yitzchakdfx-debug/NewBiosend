@@ -88,6 +88,9 @@ class BatchUnit:
     position_label: str
     load_channel: str
     load_serial_number: str
+    #: LED check answered in the pre-test dialog. None = not asked there (e.g. a
+    #: Maintenance single-step run), so the runner prompts as before.
+    led_verdict: bool | None = None
 
 
 _VALID_ROLES: frozenset[str] = frozenset(ALL_ROLES)

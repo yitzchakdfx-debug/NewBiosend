@@ -245,6 +245,7 @@ class TestRunnerThread(QThread):
         self._tst_set_bands: set[str] = set()
         self._reports: list[BatchUnitReport] = []
         self._current_unit: BatchUnit | None = None
+        self._current_step: TestStep | None = None
         self._current_test_name = ""
         if batch_units:
             self._batch_units = list(batch_units)
@@ -340,37 +341,9 @@ class TestRunnerThread(QThread):
                     if not self._retry_connect(exc):
                         return
 
-            try:
-                doc = self._script_manager.load_document(self._script_path)
-            except ScriptParseError as exc:
-                self._emit_log("error", f"Script load failed at line {exc.line_no}: {exc.msg}")
+            steps = self._load_selected_steps()
+            if steps is None:
                 return
-            except (OSError, ValueError) as exc:
-                self._emit_log("error", f"Script load failed: {exc}")
-                return
-
-            self._script_metadata = doc.metadata
-            steps = [s for s in doc.steps if s.name in self._selected_names]
-            if not steps:
-                self._emit_log("info", "No steps selected to run.")
-                return
-
-            # Record how much of the script this run covers, so a report can
-            # disclose a partial selection. Hidden setup/teardown steps are
-            # excluded from both counts: they are machinery, not test criteria,
-            # and counting them would make a full run read as "17 / 20".
-            self._steps_available = sum(
-                1 for s in doc.steps if not getattr(s, "hidden", False)
-            )
-            self._steps_selected = sum(
-                1 for s in steps if not getattr(s, "hidden", False)
-            )
-            if self._steps_selected < self._steps_available:
-                self._emit_log(
-                    "info",
-                    f"Partial run: {self._steps_selected} of "
-                    f"{self._steps_available} tests selected.",
-                )
 
             total_units = len(self._batch_units)
 
@@ -410,6 +383,106 @@ class TestRunnerThread(QThread):
             self.current_test.emit("")
             self.progress_test.emit(0)
             self._pause_event.set()
+
+    def _load_selected_steps(self) -> list[TestStep] | None:
+        """Parse the script and return the selected steps, or None (already logged).
+
+        Shared by `run()` and `record_led_failure()` so a report built without a
+        run covers exactly the steps a run would have.
+        """
+        try:
+            doc = self._script_manager.load_document(self._script_path)
+        except ScriptParseError as exc:
+            self._emit_log("error", f"Script load failed at line {exc.line_no}: {exc.msg}")
+            return None
+        except (OSError, ValueError) as exc:
+            self._emit_log("error", f"Script load failed: {exc}")
+            return None
+
+        self._script_metadata = doc.metadata
+        steps = [s for s in doc.steps if s.name in self._selected_names]
+        if not steps:
+            self._emit_log("info", "No steps selected to run.")
+            return None
+
+        # Record how much of the script this run covers, so a report can
+        # disclose a partial selection. Hidden setup/teardown steps are
+        # excluded from both counts: they are machinery, not test criteria,
+        # and counting them would make a full run read as "17 / 20".
+        self._steps_available = sum(
+            1 for s in doc.steps if not getattr(s, "hidden", False)
+        )
+        self._steps_selected = sum(
+            1 for s in steps if not getattr(s, "hidden", False)
+        )
+        if self._steps_selected < self._steps_available:
+            self._emit_log(
+                "info",
+                f"Partial run: {self._steps_selected} of "
+                f"{self._steps_available} tests selected.",
+            )
+        return steps
+
+    def record_led_failure(self) -> BatchUnitReport | None:
+        """Record the first batch unit as failing the LED check, without a run.
+
+        The operator answers the LED check in the pre-test dialog. A unit whose
+        LED is confirmed OFF never enters the run — the operator swaps in a
+        replacement instead — but spec §1.1.4.5 still requires a report for it.
+        This builds the same report a run would have produced had the LED step
+        failed: the LED row as FAIL and every later test N/A. It never touches
+        the hardware, so call it on a thread that was not started. Returns None
+        if the script cannot be loaded (already logged).
+        """
+        steps = self._load_selected_steps()
+        if steps is None:
+            return None
+        unit = self._batch_units[0]
+        self._current_unit = unit
+        record = self._new_record(unit, 1)
+        normal_steps = [s for s in steps if not getattr(s, "always", False)]
+
+        led_step = next((s for s in normal_steps if self.is_led_step(s)), None)
+        if led_step is not None:
+            payload: TestResultPayload = {
+                "value": 0.0,
+                "min": led_step.min_val if led_step.min_val is not None else float("nan"),
+                "max": led_step.max_val if led_step.max_val is not None else float("nan"),
+                "unit": led_step.unit,
+                "passed": False,
+                "is_measurement": True,
+            }
+            self._emit_result(unit, led_step.name, payload)
+            record.results.append(
+                {
+                    "test_name": led_step.name,
+                    "loop": 1,
+                    **self._report_fields(led_step),
+                    **dict(payload),
+                }
+            )
+        self._emit_log(
+            "error", f"{unit.serial_number}: LED indication not lit (recorded at setup)."
+        )
+        self._backfill_skipped(record, unit, normal_steps)
+
+        record.overall_passed = False
+        record.end_time = datetime.now()
+        self._save_record(record)
+        report = BatchUnitReport(
+            unit=unit,
+            record=record,
+            tester_name=self.tester_name,
+            employee_id=self.employee_id,
+            uut_type=self.uut_type,
+            test_program_name=self._logical_script_name,
+            overall_result="FAIL",
+            alert_message="LED indication not lit (recorded at pre-test setup).",
+            steps_selected=self._steps_selected,
+            steps_available=self._steps_available,
+        )
+        self._reports.append(report)
+        return report
 
     def _new_record(self, unit: BatchUnit, batch_index: int) -> TestRunRecord:
         return TestRunRecord(
@@ -566,7 +639,7 @@ class TestRunnerThread(QThread):
         # If the selected steps contain no LED check (a partial Maintenance
         # selection, or a product whose script has none), fall back to gating up
         # front: polarity must still be verified before a load is switched on.
-        has_led_step = any(self._is_led_step(s) for s in normal_steps)
+        has_led_step = any(self.is_led_step(s) for s in normal_steps)
         polarity_pending = self._production_flow and has_led_step
         if self._production_flow and not has_led_step:
             if not self._check_polarity(record, unit):
@@ -679,7 +752,7 @@ class TestRunnerThread(QThread):
                 # Spec §1.1.4.2 / Appendix A: LED is Test 1 and gates everything
                 # after it; Polarity is Test 2. Run the polarity gate as soon as
                 # the LED step has passed, before any load is applied.
-                if polarity_pending and self._is_led_step(step):
+                if polarity_pending and self.is_led_step(step):
                     polarity_pending = False
                     if not self._check_polarity(record, unit):
                         msg = (
@@ -982,6 +1055,8 @@ class TestRunnerThread(QThread):
         """Execute every command in `step`; return (passed, last_measurement)."""
         last_measurement: float | None = None
         n = max(1, len(step.commands))
+        # Lets `_execute_command` recognise the LED step's PromptYesNo.
+        self._current_step = step
 
         for idx, cmd in enumerate(step.commands, start=1):
             if self._stop_requested:
@@ -1153,7 +1228,7 @@ class TestRunnerThread(QThread):
         return any(str(cmd["cmd"]).lower() == "promptyesno" for cmd in step.commands)
 
     @classmethod
-    def _is_led_step(cls, step: TestStep) -> bool:
+    def is_led_step(cls, step: TestStep) -> bool:
         """True for the manual LED check that gates the rest of the run.
 
         Detected by its `PromptYesNo` — the operator-answered step — rather than
@@ -1232,6 +1307,24 @@ class TestRunnerThread(QThread):
             return None
 
         if name == "promptyesno":
+            # The LED check is answered in the pre-test dialog, before the run
+            # starts. Use that answer instead of asking again: the step still
+            # executes, so LED stays Test 1 on the report and the polarity gate
+            # still fires right after it (spec §1.1.4.2, Appendix A).
+            unit = self._current_unit
+            step = self._current_step
+            if (
+                unit is not None
+                and unit.led_verdict is not None
+                and step is not None
+                and self.is_led_step(step)
+            ):
+                self._emit_log(
+                    "info",
+                    f"LED Indication: {'PASS' if unit.led_verdict else 'FAIL'}"
+                    " (answered at pre-test setup)",
+                )
+                return 1.0 if unit.led_verdict else 0.0
             self._yesno_event.clear()
             # Same race as above. Losing this wake-up is what left the process
             # alive with an invisible window after the operator closed the app

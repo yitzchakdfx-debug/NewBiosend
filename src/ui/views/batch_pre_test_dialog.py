@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Callable
+
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -12,6 +14,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QProgressBar,
     QVBoxLayout,
 )
@@ -121,14 +124,24 @@ class BatchPreTestDialog(QDialog):
         default_uut_type: str = "",
         scan_target_v: float = 24.0,
         scan_tol_pct: float = 5.0,
+        require_led: bool = False,
+        on_led_failed: Callable[[BatchUnit, str, str], None] | None = None,
         parent=None,
     ) -> None:
+        """`require_led` adds the per-unit "LED ON" column (spec §1.1.4.2: the
+        LED check is the first test). `on_led_failed(unit, uut_type, tester)`
+        is called for each unit the operator confirms has no LED, so the caller
+        can record its FAIL report; that unit is then removed from the batch.
+        """
         super().__init__(parent)
         self.setWindowTitle("Batch Pre-Test Setup")
-        self.resize(660, 460)
+        self.resize(760 if require_led else 660, 460)
+        self._require_led = require_led
+        self._on_led_failed = on_led_failed
         self._serial_edits: list[QLineEdit] = []
         self._slot_indices: list[int] = []
         self._row_checks: list[QCheckBox] = []
+        self._led_checks: list[QCheckBox] = []
         self._detected_slots: list[int] | None = None
 
         root = QVBoxLayout(self)
@@ -220,6 +233,8 @@ class BatchPreTestDialog(QDialog):
             on = self._slot_indices[idx] in detected
             chk.setChecked(on)
             self._serial_edits[idx].setEnabled(on)
+            if self._led_checks:
+                self._led_checks[idx].setEnabled(on)
 
     # ------------------------------------------------------------------
     # Layout helpers
@@ -243,8 +258,11 @@ class BatchPreTestDialog(QDialog):
         self._serial_edits.clear()
         self._slot_indices.clear()
         self._row_checks.clear()
+        self._led_checks.clear()
 
         headers = ["", "Position", "Load channel", "Load serial", "UUT serial"]
+        if self._require_led:
+            headers.append("LED ON")
         for col, text in enumerate(headers):
             lbl = QLabel(text)
             lbl.setObjectName("lbl_batch_header")
@@ -270,6 +288,19 @@ class BatchPreTestDialog(QDialog):
             chk.toggled.connect(edit.setEnabled)
             chk.toggled.connect(self._on_check_toggled)
             self._row_checks.append(chk)
+
+            if self._require_led:
+                # Never pre-ticked: the operator must look at the unit.
+                led = QCheckBox()
+                led.setObjectName("chk_led_on")
+                led.setToolTip("Tick when this unit's green LED is ON and steady.")
+                led.setEnabled(False)  # enabled only when its channel is ticked
+                chk.toggled.connect(led.setEnabled)
+                chk.toggled.connect(
+                    lambda on, led=led: None if on else led.setChecked(False)
+                )
+                self._led_checks.append(led)
+                self._grid.addWidget(led, row, 5, Qt.AlignmentFlag.AlignCenter)
 
             self._grid.addWidget(chk, row, 0, Qt.AlignmentFlag.AlignCenter)
             self._grid.addWidget(QLabel(f"Position {slot}"), row, 1)
@@ -318,30 +349,85 @@ class BatchPreTestDialog(QDialog):
             self._error.setText("Duplicate serial numbers are not allowed.")
             return
 
+        if self._require_led and not self._resolve_unlit_leds(active_indices, uut, tester):
+            return
+
         self._error.clear()
         self.accept()
+
+    def _resolve_unlit_leds(self, active_indices: list[int], uut: str, tester: str) -> bool:
+        """Ask about every active unit whose LED is not ticked. True = all lit.
+
+        "Forgot" sends the operator back to tick it. "Really off" records the
+        unit as a FAIL through `on_led_failed` and clears its serial so a
+        replacement can be scanned into the same channel. Either way the run
+        does not start until every unit in the batch has a lit LED.
+        """
+        failed: list[str] = []
+        for idx in active_indices:
+            if self._led_checks[idx].isChecked():
+                continue
+            slot = self._slot_indices[idx]
+            serial = self._serial_edits[idx].text().strip()
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Icon.Warning)
+            box.setWindowTitle("LED not marked")
+            box.setText(f"CH{slot} — {serial}: the LED is not marked as ON.")
+            box.setInformativeText(
+                "Is the green LED really off, or did you forget to tick it?"
+            )
+            forgot = box.addButton(
+                "I forgot — go back", QMessageBox.ButtonRole.RejectRole
+            )
+            really_off = box.addButton(
+                "LED is really OFF — fail this unit",
+                QMessageBox.ButtonRole.DestructiveRole,
+            )
+            box.setDefaultButton(forgot)
+            box.exec()
+            if box.clickedButton() is not really_off:
+                self._led_checks[idx].setFocus(Qt.FocusReason.OtherFocusReason)
+                return False
+            if self._on_led_failed is not None:
+                self._on_led_failed(self._unit_for_row(idx, led_verdict=False), uut, tester)
+            failed.append(serial)
+            self._serial_edits[idx].clear()
+            self._serial_edits[idx].setFocus(Qt.FocusReason.OtherFocusReason)
+
+        if not failed:
+            return True
+        self._error.setText(
+            f"{', '.join(failed)} failed the LED check. Scan a replacement "
+            "unit or uncheck the channel, then press OK."
+        )
+        return False
 
     def _active_row_indices(self) -> list[int]:
         if self._row_checks:
             return [i for i, chk in enumerate(self._row_checks) if chk.isChecked()]
         return list(range(len(self._serial_edits)))
 
+    def _unit_for_row(self, idx: int, *, led_verdict: bool | None) -> BatchUnit:
+        slot = self._slot_indices[idx] if idx < len(self._slot_indices) else idx + 1
+        load_serial = (
+            LOAD_SERIALS[slot - 1] if slot - 1 < len(LOAD_SERIALS) else f"LOAD-{slot}"
+        )
+        return BatchUnit(
+            serial_number=self._serial_edits[idx].text().strip(),
+            slot_index=slot,
+            position_label=f"Position {slot}",
+            load_channel=f"CH{slot}",
+            load_serial_number=load_serial,
+            led_verdict=led_verdict,
+        )
+
     def result_dict(self) -> dict[str, object]:
-        units: list[BatchUnit] = []
-        for idx in self._active_row_indices():
-            slot = self._slot_indices[idx] if idx < len(self._slot_indices) else idx + 1
-            load_serial = (
-                LOAD_SERIALS[slot - 1] if slot - 1 < len(LOAD_SERIALS) else f"LOAD-{slot}"
-            )
-            units.append(
-                BatchUnit(
-                    serial_number=self._serial_edits[idx].text().strip(),
-                    slot_index=slot,
-                    position_label=f"Position {slot}",
-                    load_channel=f"CH{slot}",
-                    load_serial_number=load_serial,
-                )
-            )
+        # Accept is only reached once every active unit's LED is ticked.
+        verdict = True if self._require_led else None
+        units = [
+            self._unit_for_row(idx, led_verdict=verdict)
+            for idx in self._active_row_indices()
+        ]
         return {
             "uut_type": self._combo_uut.currentText().strip(),
             "tester_name": self._edit_tester.text().strip(),

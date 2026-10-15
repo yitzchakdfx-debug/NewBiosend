@@ -203,20 +203,39 @@ LED check the first test — "the subsequent DC Load tests will not be permitted
 to proceed" until it is answered — and Appendix A numbers LED as Test 1 and
 Polarity as Test 2. The gate therefore fires from inside the step loop, right
 after the LED step passes and before any load is applied.
-`_is_led_step` identifies it by its `PromptYesNo` (so a rename or translation
+`is_led_step` identifies it by its `PromptYesNo` (so a rename or translation
 still gates), falling back to the Appendix B `Report` name. If the selected
 steps contain no LED check — a partial Maintenance selection, or a product whose
 script has none — the gate runs up front instead, because polarity must still be
 verified before a load is switched on.
 
-The operator answers through `ui/views/led_check_dialog.py`, which presents the
-**Pass / Fail checkboxes** spec §1.1.6.3 names verbatim ("check the 'Pass'
-Checkbox … check the 'Fail' Checkbox"). Neither box is pre-ticked, the two are
-mutually exclusive, OK stays disabled until one is chosen, and the dialog cannot
-be dismissed — that is how §1.1.4.2's "the subsequent DC Load tests will not be
-permitted to proceed" is enforced at the GUI. Other `PromptYesNo` steps still
-use a plain Yes/No box; the checkbox requirement is specific to the LED test.
-`MainWindow._is_led_prompt` routes between the two on the prompt text.
+**The LED is answered before the run, in the pre-test dialog** (since
+2026-10-15). `BatchPreTestDialog` shows an **"LED ON"** checkbox per unit when the
+selected steps include an LED step. None is pre-ticked. Pressing OK with an
+active unit's LED unticked asks, per unit, "really off, or did you forget?":
+
+* **Forgot** — back to the dialog to tick it.
+* **Really off** — `MainWindow._report_led_failure` records that unit's FAIL
+  report: an unstarted `TestRunnerThread.record_led_failure()` builds the LED row
+  as FAIL plus N/A for every later test (the same rows a run would produce, via
+  `_backfill_skipped`) without touching the hardware, then
+  `_finalize_run_reports` archives the PDF/XML — so Maintenance still gets no
+  report. The unit's serial is cleared so a replacement can be scanned into the
+  same channel, and the dialog stays open.
+
+The run starts only once every unit in the batch has a lit LED. Each `BatchUnit`
+carries the answer as `led_verdict`; when the runner reaches the LED step's
+`PromptYesNo` it uses that answer instead of prompting, so the step still runs —
+LED stays Test 1 on the report and the polarity gate still fires right after it.
+
+Deviation to disclose: spec §1.1.6.3 names separate "Pass" and "Fail"
+checkboxes. The dialog has one checkbox, with Fail confirmed explicitly through
+the "really off" prompt.
+
+`ui/views/led_check_dialog.py` (the Pass/Fail checkbox dialog) remains as the
+fallback when `led_verdict` is None — a Maintenance single-step run has no
+pre-test dialog. `MainWindow._is_led_prompt` routes LED prompts to it and other
+`PromptYesNo` steps to a plain Yes/No box.
 
 `_check_polarity` performs its own `loadoff` + 3 s settle (`_POLARITY_SETTLE_MS`)
 before reading, as §1.1.7.1 requires. It does not rely on a script step for

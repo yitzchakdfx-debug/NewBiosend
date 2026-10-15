@@ -1041,32 +1041,9 @@ class MainWindow(QMainWindow):
             self.control_panel.btn_start.setText("Pause")
             return
 
-        _scan_target_v = 24.0
-        _scan_tol_pct = 5.0
-        if self._active_script_path.is_file():
-            try:
-                _meta = self._script_manager.load_document(self._active_script_path).metadata
-                _scan_target_v = float(_meta.get("input_target", "") or 24.0)
-                _scan_tol_pct = float(_meta.get("input_tol", "") or 5.0)
-            except Exception:
-                pass
-
-        dlg = BatchPreTestDialog(
-            tester_name_default=str(self._user_info.get("name", "")),
-            default_uut_type=self.control_panel.edit_uut_type.text(),
-            scan_target_v=_scan_target_v,
-            scan_tol_pct=_scan_tol_pct,
-            parent=self,
-        )
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-
-        dialog_results = dlg.result_dict()
-        batch_units = list(dialog_results["batch_units"])
-        first_serial = batch_units[0].serial_number if batch_units else ""
-        self.control_panel.edit_serial_number.setText(first_serial)
-        self.control_panel.edit_user_name.setText(dialog_results["tester_name"])
-
+        # Checked before the dialog, not after it: the dialog can now record an
+        # LED failure report, which needs the script, its steps and the part
+        # number.
         tests_to_run = self._selected_test_names()
         if not tests_to_run:
             self.append_trace("No tests selected (check at least one item in the list).")
@@ -1081,13 +1058,51 @@ class MainWindow(QMainWindow):
             return
 
         part_number = self.control_panel.edit_part_number.text().strip()
-        if not part_number or not batch_units:
+        if not part_number:
             QMessageBox.warning(
                 self,
                 "Missing unit info",
-                "Part Number and at least one serial number are required before starting a test.",
+                "Part Number is required before starting a test.",
             )
             return
+
+        _scan_target_v = 24.0
+        _scan_tol_pct = 5.0
+        try:
+            _meta = self._script_manager.load_document(self._active_script_path).metadata
+            _scan_target_v = float(_meta.get("input_target", "") or 24.0)
+            _scan_tol_pct = float(_meta.get("input_tol", "") or 5.0)
+        except Exception:
+            pass
+
+        # Cleared now rather than at run start, so the trace lines of any LED
+        # failure recorded from the dialog stay visible.
+        self._clear_trace()
+
+        # The LED check is answered per unit in the dialog (spec §1.1.4.2: it is
+        # the first test) — only when the selected steps include it.
+        selected = set(tests_to_run)
+        require_led = self._active_document is not None and any(
+            step.name in selected and TestRunnerThread.is_led_step(step)
+            for step in self._active_document.steps
+        )
+        dlg = BatchPreTestDialog(
+            tester_name_default=str(self._user_info.get("name", "")),
+            default_uut_type=self.control_panel.edit_uut_type.text(),
+            scan_target_v=_scan_target_v,
+            scan_tol_pct=_scan_tol_pct,
+            require_led=require_led,
+            on_led_failed=self._report_led_failure,
+            parent=self,
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        dialog_results = dlg.result_dict()
+        batch_units = list(dialog_results["batch_units"])
+        first_serial = batch_units[0].serial_number if batch_units else ""
+        self.control_panel.edit_serial_number.setText(first_serial)
+        self.control_panel.edit_user_name.setText(dialog_results["tester_name"])
 
         self.control_panel.edit_uut_type.setText(dialog_results["uut_type"])
         self.control_panel.edit_serial_number.setReadOnly(True)
@@ -1098,8 +1113,65 @@ class MainWindow(QMainWindow):
             f"1 / {len(batch_units)} — {first_serial}"
         )
 
-        self._clear_trace()
         self._start_test_run(dialog_results)
+
+    def _report_led_failure(self, unit: BatchUnit, uut_type: str, tester_name: str) -> None:
+        """Record the FAIL report for a unit whose LED the operator confirmed OFF.
+
+        Called from the pre-test dialog. The unit never enters the run, so the
+        report is built by an unstarted runner (`record_led_failure` touches no
+        hardware) and archived through the normal `_finalize_run_reports` path —
+        which also enforces the Maintenance no-report rule.
+        """
+        employee_id = str(self._user_info.get("employee_id", ""))
+        logical_script_name = (
+            f"{self._catalog_test_name} {getattr(self, '_catalog_version', '')}"
+        ).strip()
+        thread = TestRunnerThread(
+            self._active_script_path,
+            set(self._selected_test_names()),
+            operator=tester_name,
+            tester_name=tester_name,
+            employee_id=employee_id,
+            uut_type=uut_type,
+            part_number=self.control_panel.edit_part_number.text().strip(),
+            serial_number=unit.serial_number,
+            batch_units=[unit],
+            script_manager=self._script_manager,
+            logical_script_name=logical_script_name,
+            persist_runs=self._can(Capability.ARCHIVE_RUN),
+        )
+        thread.log_msg.connect(self.append_trace)
+        if thread.record_led_failure() is None:
+            QMessageBox.warning(
+                self,
+                "LED failure not recorded",
+                f"Could not build the report for {unit.serial_number}. "
+                "See the Messages tab for details.",
+            )
+            return
+
+        # `_finalize_run_reports` reads `self.test_thread`; swap it in the same
+        # way the parallel-run path does for each of its units.
+        previous = self.test_thread
+        self.test_thread = thread
+        try:
+            self._finalize_run_reports()
+        finally:
+            self.test_thread = previous
+
+        try:
+            DatabaseManager().log_audit_action(
+                "Unit failed LED at setup",
+                username=str(self._user_info.get("username", "")),
+                employee_id=employee_id,
+                details=(
+                    f"script={logical_script_name} sn={unit.serial_number!r} "
+                    f"channel={unit.load_channel}"
+                ),
+            )
+        except Exception:
+            pass
 
     def _reset_live_readings(self, units: list[tuple[int, str]]) -> None:
         """Rebuild the live table with one column per (slot_index, serial), in slot order.
