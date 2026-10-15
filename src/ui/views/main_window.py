@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QStyle,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -38,13 +39,12 @@ from PySide6.QtWidgets import (
 
 import threading
 
-from config import SHOW_LIVE_MONITOR, SHOW_NIGHT_MODE, SHOW_SEARCH_BAR
+from config import SHOW_NIGHT_MODE, SHOW_SEARCH_BAR
 from drivers.base_driver import BaseDriver, HardwareError
 from drivers.factory import create_driver, resolve_station_config
 from logic.database_manager import DatabaseManager
 from ui.report_worker import ReportWorker
 from logic.models import ScriptDocument, TestResultPayload
-from logic.monitor_engine import MonitorThread
 from logic.report_generator import ReportGenerator, sanitize_path_segment
 from logic.roles import Capability, can
 from logic.script_manager import ScriptManager, ScriptParseError
@@ -63,7 +63,6 @@ from ui.views.test_result_dialog import TestResultDialog
 from ui.views.user_management_dialog import UserManagementDialog
 from ui.views.version_manager_dialog import VersionManagerDialog
 from ui.widgets.control_panel import ControlPanelWidget
-from ui.widgets.instrument_panel import InstrumentPanelWidget
 from ui.widgets.result_row_delegate import ResultRowDelegate
 from version import __version__
 
@@ -87,6 +86,8 @@ def _format_measurement(value: float) -> str:
 class MainWindow(QMainWindow):
     _ICONS_DIR = resource_path("ui", "assets", "icons")
     _RESULTS_DIR = user_data_path("results")
+    #: Live-table rows: `live_reading` key -> row label. One column per UUT.
+    _LIVE_QUANTITIES = {"V": "Voltage [V]", "A": "Current [A]", "W": "Power [W]"}
 
     sequence_finished = Signal(bool)
 
@@ -134,21 +135,8 @@ class MainWindow(QMainWindow):
         # first read, so without this the first read could happen *after* a
         # mid-session save — and the whole point of caching is that the backend and
         # load address the shutdown `loadoff` path sees are the ones the run used.
-        # Not left to the monitor: it is gated on SHOW_LIVE_MONITOR.
         resolve_station_config()
         self._setup_ui()
-        if SHOW_LIVE_MONITOR:
-            # No `simulate=` argument: the thread resolves the backend itself, so
-            # it cannot drift from the driver `create_driver()` hands it.
-            self.monitor_thread = MonitorThread(parent=self)
-            self.monitor_thread.values_updated.connect(self.instrument_panel.update_values)
-            # The monitor reconnects by itself while disconnected; say so when it
-            # succeeds, so an operator who replugged a cable knows the station is
-            # live again instead of guessing from the readout.
-            self.monitor_thread.connection_restored.connect(
-                lambda: self.append_trace("Instrument connection restored.")
-            )
-            self.monitor_thread.start()
         self._apply_theme_file()
         self._update_icons(self.is_dark_mode)
         self._apply_role_permissions()
@@ -273,7 +261,11 @@ class MainWindow(QMainWindow):
 
         self.btn_load_script.setText("Product")
 
-        self.trace_container.setVisible(self._can(Capability.VIEW_TRACE_LOG))
+        # Live readings are for every role; the message log stays diagnostic.
+        self.bottom_tabs.setTabVisible(
+            self.bottom_tabs.indexOf(self.trace_container),
+            self._can(Capability.VIEW_TRACE_LOG),
+        )
         self.control_panel.chk_save_log.setVisible(self._can(Capability.ARCHIVE_RUN))
 
         list_actions_visible = self._can(Capability.SELECT_STEPS)
@@ -746,10 +738,32 @@ class MainWindow(QMainWindow):
         trace_layout.addLayout(log_bar)
         trace_layout.addWidget(self.trace_log)
 
+        # One column per UUT in the current run (1-4), one row per quantity,
+        # filled from the runner's `live_reading` signal. Columns are rebuilt
+        # at each run start.
+        self.live_table = QTableWidget(len(self._LIVE_QUANTITIES), 0)
+        self.live_table.setObjectName("live_readings_table")
+        self.live_table.setVerticalHeaderLabels(list(self._LIVE_QUANTITIES.values()))
+        self.live_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.live_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        self.live_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.live_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Stretch
+        )
+        self.live_table.verticalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Stretch
+        )
+        self._live_columns: dict[int, int] = {}  # slot_index -> table column
+
+        self.bottom_tabs = QTabWidget()
+        self.bottom_tabs.setObjectName("bottom_tabs")
+        self.bottom_tabs.addTab(self.live_table, "Live Readings")
+        self.bottom_tabs.addTab(self.trace_container, "Messages")
+
         v_splitter = QSplitter(Qt.Vertical)
         v_splitter.setObjectName("center_splitter")
         v_splitter.addWidget(results_table_container)
-        v_splitter.addWidget(self.trace_container)
+        v_splitter.addWidget(self.bottom_tabs)
         v_splitter.setStretchFactor(0, 7)
         v_splitter.setStretchFactor(1, 3)
         v_splitter.setSizes([700, 300])
@@ -768,9 +782,6 @@ class MainWindow(QMainWindow):
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(2)
-        if SHOW_LIVE_MONITOR:
-            self.instrument_panel = InstrumentPanelWidget()
-            right_layout.addWidget(self.instrument_panel, stretch=0)
         right_layout.addWidget(self.control_panel, stretch=1)
 
         right_scroll = QScrollArea()
@@ -1040,13 +1051,6 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
-        # Release the live monitor's hardware connection before scanning. A raw
-        # TCP SOCKET instrument accepts only one connection at a time; if the
-        # monitor keeps polling, the dialog's scan thread cannot connect and
-        # silently falls back to mock (reading 24 V), so a 5 V scan finds nothing.
-        if hasattr(self, "monitor_thread") and self.monitor_thread.isRunning():
-            self.monitor_thread.pause()
-
         dlg = BatchPreTestDialog(
             tester_name_default=str(self._user_info.get("name", "")),
             default_uut_type=self.control_panel.edit_uut_type.text(),
@@ -1055,7 +1059,6 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         if dlg.exec() != QDialog.DialogCode.Accepted:
-            self._resume_monitor()
             return
 
         dialog_results = dlg.result_dict()
@@ -1067,7 +1070,6 @@ class MainWindow(QMainWindow):
         tests_to_run = self._selected_test_names()
         if not tests_to_run:
             self.append_trace("No tests selected (check at least one item in the list).")
-            self._resume_monitor()
             return
 
         if not self._active_script_path.is_file():
@@ -1076,7 +1078,6 @@ class MainWindow(QMainWindow):
                 "No script",
                 f"Active script does not exist: {self._active_script_path}",
             )
-            self._resume_monitor()
             return
 
         part_number = self.control_panel.edit_part_number.text().strip()
@@ -1086,7 +1087,6 @@ class MainWindow(QMainWindow):
                 "Missing unit info",
                 "Part Number and at least one serial number are required before starting a test.",
             )
-            self._resume_monitor()
             return
 
         self.control_panel.edit_uut_type.setText(dialog_results["uut_type"])
@@ -1101,10 +1101,43 @@ class MainWindow(QMainWindow):
         self._clear_trace()
         self._start_test_run(dialog_results)
 
-    def _resume_monitor(self) -> None:
-        """Restart live-monitor polling after a scan/run that held the hardware."""
-        if hasattr(self, "monitor_thread") and self.monitor_thread.isRunning():
-            self.monitor_thread.resume()
+    def _reset_live_readings(self, units: list[tuple[int, str]]) -> None:
+        """Rebuild the live table with one column per (slot_index, serial), in slot order.
+
+        The header names both the load channel and the UUT serial, so each
+        column can be matched to a physical supply at a glance. Values start as
+        "--" and stay at their last reading after the run ends, so the operator
+        can still read them once the result dialog is closed.
+        """
+        units = sorted(units)
+        self.live_table.setColumnCount(len(units))
+        self.live_table.setHorizontalHeaderLabels(
+            [f"CH{slot}\n{serial}" for slot, serial in units]
+        )
+        self._live_columns = {}
+        for col, (slot, _serial) in enumerate(units):
+            for row in range(len(self._LIVE_QUANTITIES)):
+                item = QTableWidgetItem("--")
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.live_table.setItem(row, col, item)
+            self._live_columns[slot] = col
+        self.bottom_tabs.setCurrentWidget(self.live_table)
+
+    def _on_live_reading(self, data: dict) -> None:
+        """Merge a (possibly partial) V/A/W reading into its unit's column."""
+        col = self._live_columns.get(int(data.get("slot", 0)))
+        if col is None:
+            return
+        for row, key in enumerate(self._LIVE_QUANTITIES):
+            if key not in data:
+                continue
+            try:
+                text = f"{float(data[key]):.2f}"
+            except (TypeError, ValueError):
+                continue
+            item = self.live_table.item(row, col)
+            if item is not None:
+                item.setText(text)
 
     def _wire_test_thread_signals(self, thread: TestRunnerThread) -> None:
         """Connect a runner thread to the UI. Shared by production and maintenance runs."""
@@ -1118,6 +1151,7 @@ class MainWindow(QMainWindow):
         thread.unit_finished.connect(self._on_unit_finished)
         thread.unit_alert.connect(self._on_unit_alert)
         thread.load_shutdown_failed.connect(self._on_load_shutdown_failed)
+        thread.live_reading.connect(self._on_live_reading)
         thread.prompt_request.connect(self._on_prompt_request)
         thread.prompt_yesno_request.connect(self._on_prompt_yesno_request)
         thread.script_log.connect(self._on_script_log)
@@ -1195,8 +1229,6 @@ class MainWindow(QMainWindow):
         ):
             return
 
-        if hasattr(self, "monitor_thread") and self.monitor_thread.isRunning():
-            self.monitor_thread.pause()
 
         self.results_table.setRowCount(0)
         self.control_panel.progress_total.setValue(0)
@@ -1204,6 +1236,8 @@ class MainWindow(QMainWindow):
         self.control_panel.btn_stop.setEnabled(True)
         self._clear_trace()
         self.append_trace(f"Maintenance run: {sorted(selection)}")
+        # The runner builds its default unit on slot 1 with this serial.
+        self._reset_live_readings([(1, "MAINT")])
 
         employee_id = str(self._user_info.get("employee_id", ""))
         self.test_thread = TestRunnerThread(
@@ -1235,8 +1269,6 @@ class MainWindow(QMainWindow):
         self.test_thread.start()
 
     def _start_test_run(self, pre_meta: dict) -> None:
-        if hasattr(self, "monitor_thread") and self.monitor_thread.isRunning():
-            self.monitor_thread.pause()
 
         tests_to_run = self._selected_test_names()
 
@@ -1262,6 +1294,7 @@ class MainWindow(QMainWindow):
         stop_on_fail = self.control_panel.chk_stop_on_fail.isChecked()
 
         batch_units = list(pre_meta["batch_units"])
+        self._reset_live_readings([(u.slot_index, u.serial_number) for u in batch_units])
         operator = self.control_panel.edit_user_name.text().strip()
         part_number = self.control_panel.edit_part_number.text().strip()
         serial_number = batch_units[0].serial_number if batch_units else ""
@@ -1497,8 +1530,6 @@ class MainWindow(QMainWindow):
                 self.append_trace(
                     "Warning: a report worker did not finish within 5s."
                 )
-        if hasattr(self, "monitor_thread") and self.monitor_thread.isRunning():
-            self.monitor_thread.stop()
         self._release_load_on_exit()
 
     def _release_load_on_exit(self) -> None:
@@ -1751,6 +1782,7 @@ class MainWindow(QMainWindow):
             th.unit_finished.connect(self._on_unit_finished)
             th.unit_alert.connect(self._on_unit_alert)
             th.load_shutdown_failed.connect(self._on_load_shutdown_failed)
+            th.live_reading.connect(self._on_live_reading)
             th.prompt_request.connect(self._on_prompt_request)
             th.prompt_yesno_request.connect(self._on_prompt_yesno_request)
             th.script_log.connect(self._on_script_log)
@@ -1825,8 +1857,6 @@ class MainWindow(QMainWindow):
         self._parallel_finished_count = 0
         self.control_panel.hide_parallel_progress()
 
-        if hasattr(self, "monitor_thread") and self.monitor_thread.isRunning():
-            self.monitor_thread.resume()
 
         self.control_panel.set_running_state(False)
         self.control_panel.edit_part_number.setReadOnly(False)
@@ -1841,8 +1871,6 @@ class MainWindow(QMainWindow):
         if th is None:
             return
 
-        if hasattr(self, "monitor_thread") and self.monitor_thread.isRunning():
-            self.monitor_thread.resume()
 
         self.append_trace("Sequence Complete.")
 

@@ -75,6 +75,20 @@ _OPERATOR_PROMPT_POLL_S = 0.2
 # Spec §1.1.7.1 specifies 3 seconds for this test.
 _POLARITY_SETTLE_MS = 3000
 
+# How often a `Delay` samples current and power for the live-readings pane.
+# Voltage is already read every poll when the delay is monitored; current and
+# power are extra queries on the 3300G's single connection, so they are sampled
+# at a gentler rate than the 300 ms monitoring cadence.
+_LIVE_READING_INTERVAL_MS = 1000
+
+#: Measurement commands whose result is a live V/A/W reading, mapped to the key
+#: the live-readings pane displays it under.
+_LIVE_READING_KEYS: dict[str, str] = {
+    "measvoltage": "V",
+    "meascurrent": "A",
+    "measpower": "W",
+}
+
 
 class _MonitorOutOfRange(Exception):
     """Raised when continuous voltage monitoring during a `Delay` trips.
@@ -135,6 +149,10 @@ class TestRunnerThread(QThread):
     #: Safety-relevant: the UUT may still be dissipating full test power with
     #: nothing supervising it, so the UI must show this, not just log it.
     load_shutdown_failed = Signal(str)
+    #: A live reading for the current unit: {"slot", "serial"} plus any of
+    #: "V", "A", "W". Partial on purpose — a step that measures only current
+    #: updates only that cell — so the receiver merges rather than replaces.
+    live_reading = Signal(dict)
 
     def __init__(
         self,
@@ -272,6 +290,36 @@ class TestRunnerThread(QThread):
                 )
                 return self._hw.execute_command(command, args)
         return self._hw.execute_command(command, args)
+
+    def _emit_live(self, values: dict[str, float]) -> None:
+        """Publish V/A/W readings for the current unit to the live-readings pane."""
+        unit = self._current_unit
+        if unit is None or not values:
+            return
+        self.live_reading.emit(
+            {"slot": unit.slot_index, "serial": unit.serial_number, **values}
+        )
+
+    def _sample_live_readings(self, *, include_voltage: bool) -> bool:
+        """Read current and power (and voltage if asked) for the live pane.
+
+        Display only: these values never decide a verdict, so a failed read is
+        swallowed rather than failing the step. Returns False on a failure so the
+        caller can stop sampling — the driver has already spent its reconnect
+        budget by then, and retrying every second would stretch the delay.
+        """
+        commands = ["meascurrent", "measpower"]
+        if include_voltage:
+            commands.insert(0, "measvoltage")
+        values: dict[str, float] = {}
+        try:
+            for command in commands:
+                values[_LIVE_READING_KEYS[command]] = self._hw_execute(command, [])
+        except Exception:
+            self._emit_live(values)
+            return False
+        self._emit_live(values)
+        return True
 
     def run(self) -> None:
         self.progress_total.emit(0)
@@ -1131,11 +1179,14 @@ class TestRunnerThread(QThread):
             # voltage monitoring responsive without flooding the load's comms
             # link with queries over long burn-in delays.
             chunk = 300
+            monitored = monitor_min is not None and monitor_max is not None
+            since_live_ms = _LIVE_READING_INTERVAL_MS  # sample on the first poll
+            live_ok = True
             while elapsed_ms < total_ms and not self._stop_requested:
                 self.msleep(min(chunk, total_ms - elapsed_ms))
                 elapsed_ms += chunk
                 self.progress_test.emit(min(99, int(elapsed_ms * 100 / total_ms)))
-                if monitor_min is not None and monitor_max is not None:
+                if monitored:
                     # A read failure here has already survived the driver's
                     # reconnect budget (`_io_with_resilience`: retry + reconnect
                     # for _RECONNECT_BUDGET_S). Reaching this point therefore
@@ -1152,10 +1203,17 @@ class TestRunnerThread(QThread):
                         raise _MonitorReadFailed(
                             RuntimeError("no voltage returned"), elapsed_ms / 1000
                         )
+                    self._emit_live({"V": v})
                     if not (monitor_min <= v <= monitor_max):
                         raise _MonitorOutOfRange(
                             v, monitor_min, monitor_max, elapsed_ms / 1000
                         )
+                # After the monitoring check, so the extra queries never delay
+                # a trip. Voltage is skipped when monitoring just read it.
+                since_live_ms += chunk
+                if live_ok and since_live_ms >= _LIVE_READING_INTERVAL_MS:
+                    since_live_ms = 0
+                    live_ok = self._sample_live_readings(include_voltage=not monitored)
             return None
 
         if name == "log":
@@ -1200,6 +1258,9 @@ class TestRunnerThread(QThread):
             return answer_val
 
         value = self._hw_execute(name, args)
+        live_key = _LIVE_READING_KEYS.get(name)
+        if live_key is not None and value is not None:
+            self._emit_live({live_key: value})
         return value if name in self._hw.measurement_commands else None
 
     def resume(self) -> None:

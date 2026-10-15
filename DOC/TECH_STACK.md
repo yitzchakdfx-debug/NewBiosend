@@ -35,7 +35,7 @@ The runtime correctness of the app depends on knowing the threading rules.
 Required fluency:
 
 - **`QThread` subclassing** with overridden `run()` (two subclasses today:
-  `TestRunnerThread` and `MonitorThread`) and the cooperative-cancel pattern via
+  `TestRunnerThread` and `ReportWorker`) and the cooperative-cancel pattern via
   a boolean flag plus `threading.Event`s for pause and prompt synchronization.
 - **`Signal` / `Slot`** declarations and connections. Understanding that
   cross-thread connections become `QueuedConnection` automatically and that

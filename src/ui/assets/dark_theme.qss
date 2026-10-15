@@ -64,6 +64,7 @@ QListWidget::item:selected {
 
 QListWidget#test_list,
 QTableWidget#results_table,
+QTableWidget#live_readings_table,
 QTextEdit#trace_log {
     border: 1px solid #3f3f46;
     border-radius: 4px;
@@ -381,32 +382,6 @@ QScrollBar:horizontal { background: #2b2b2b; height: 12px; border: none; }
 QScrollBar::handle:horizontal { background: #555555; border-radius: 6px; min-width: 24px; }
 QScrollBar::handle:horizontal:hover { background: #3f3f46; }
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
-
-/* --- 8. Specific Panels: Live Instrument Monitor --- */
-QWidget#instrument_panel {
-    background-color: #232629;
-    border: 1px solid #3f3f46;
-    border-radius: 4px;
-    padding: 4px;
-}
-QLabel#instrument_panel_title {
-    color: #a0a0a0;
-    font-size: 12pt;
-}
-QFrame#readout_row {
-    background-color: #1b1d1f;
-    border: 1px solid #2f2f33;
-    border-radius: 4px;
-    padding: 4px 8px;
-}
-QLabel#readout_value_V,
-QLabel#readout_value_A {
-    font-family: Consolas, "Courier New", monospace;
-    font-size: 14pt;
-    font-weight: bold;
-}
-QLabel#readout_value_V { color: #22d3ee; }
-QLabel#readout_value_A { color: #4ade80; }
 
 /* --- 9. Semantic label variants (replaces inline setStyleSheet calls) --- */
 

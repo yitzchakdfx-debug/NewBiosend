@@ -124,8 +124,7 @@ a backend or load address, that value wins. Only fields you actually change are
 written, and setting a field back to *Use .env default* (or clearing the address)
 removes the override — so `.env` never gets shadowed by simply opening the dialog.
 The backend is resolved once at startup, so a change applies on the next launch:
-the live monitor holds an open driver, the 3300G accepts a single TCP connection,
-and the shutdown load-off safety path must reach the same instrument the run used. `HARDWARE_BACKEND` accepts
+the 3300G accepts a single TCP connection, and the shutdown load-off safety path must reach the same instrument the run used. `HARDWARE_BACKEND` accepts
 `prodigit`/`visa`/`usb` (real) or `mock`/`simulator`/`demo` (simulated) — anything
 else aborts startup with a message naming the legal values, rather than silently
 guessing.

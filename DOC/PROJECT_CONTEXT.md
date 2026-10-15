@@ -61,7 +61,6 @@ src/
     models.py          # TestStep, ScriptDocument, TestRunRecord, normalize_role()
     report_generator.py# ReportGenerator — PDF + CSV, role-gated detail
     secure_logger.py   # SecureLogger — Fernet-encrypted daily .dat logs
-    monitor_engine.py  # MonitorThread — emits simulated V/A readings
     file_lock.py       # SingleInstanceLock (Windows: named mutex)
 
   drivers/
@@ -73,7 +72,6 @@ src/
     ui_helpers.py      # attach_password_visibility_toggle + icon helper
     widgets/
       control_panel.py # ControlPanelWidget — start/stop/status/loops rail
-      instrument_panel.py  # InstrumentPanelWidget — live V/A readout
       result_row_delegate.py # PASS/FAIL cell tints
     views/
       main_window.py       # MainWindow — composition root (~1,200 lines)
@@ -234,18 +232,16 @@ would now run at the wrong point and waste a second settle).
 
 Measured on the station: a second simultaneous connection is refused with
 `could not connect: -1073807339`. Everything that touches the instrument — the
-live monitor, the pre-test scan, the test runner, the exit-time load shutdown —
-competes for a single slot. Most "cannot connect" reports trace back to this,
+pre-test scan, the test runner, the exit-time load shutdown — competes for a
+single slot. Most "cannot connect" reports trace back to this,
 not to the network.
 
-**Holding the slot.** `MonitorThread` owns the connection on the main screen and
-releases it in `pause()` before a scan or run. That handshake used to race: the
-poll loop could be inside `_connect_driver()` when `pause()` ran and reopen the
-link straight after, leaving `_paused=True` with the driver still held and every
-other component locked out. Now `pause()` sets the flag *before* taking the
-lock, and `_connect_driver` re-checks it while holding the lock, discarding what
-it just opened if paused. `resume()` clears the flag first, or its own connect
-would be discarded.
+**Holding the slot.** Nothing holds the connection while the station is idle.
+The idle live monitor (`MonitorThread` + the right-hand "Power Supply" panel,
+which showed slot 1 only) was removed on 2026-10-15; live readings now come from
+the test runner's own connection during a run (see *Live readings pane*). That
+also removed the monitor's pause/resume handshake before every scan and run,
+which had previously raced and locked the rest of the app out of the instrument.
 
 **Releasing the slot.** A session that ends without the device being told — a
 yanked cable, a killed process — leaves the 3300G holding the slot until its own
@@ -288,27 +284,14 @@ Now:
 Demo mode remains available deliberately via `HARDWARE_BACKEND=mock` (also
 `simulator`/`demo`; real hardware is `prodigit`/`visa`/`usb`, and any other
 value is rejected at startup by `config.py`). `drivers.factory.is_simulated()`
-is the single source both the driver factory and the live monitor consult, so they
-cannot disagree and contend for the 3300G's one TCP slot. It is resolved once per
+is the single source every driver consumer consults, so they cannot disagree
+and contend for the 3300G's one TCP slot. It is resolved once per
 process and cached: a backend change applies on the next launch, which is what
 the Connections dialog promises. It is
 never an automatic consolation prize during a production run.
 
-`monitor_engine` had the same fallback and it mattered more than it looked: the
-live monitor owns the hardware on the main screen, so unplugging the instrument
-turned it into a simulator **permanently** — `_connect_driver` ran only at thread
-start and on `resume()`, and `_read_values` swallowed every error and returned
-`0.0, 0.0` forever. Replugging the cable could not recover, and neither could
-leaving and re-entering the screen. Now the monitor connection is self-healing:
-
-* no MockHardware fallback — a failed connect leaves the driver `None`,
-* a failed read discards the driver instead of polling a dead handle,
-* `run()` reconnects every `_MONITOR_RECONNECT_INTERVAL_MS` (3 s) while
-  disconnected, throttled so a failing attempt's timeout cannot stall the loop,
-* `connection_restored` reports recovery in the trace pane.
-
-Test runs were never affected in the same way: each run builds a fresh driver via
-`create_driver()`, and `_io_with_resilience` retries per I/O call.
+Each test run builds a fresh driver via `create_driver()`, and
+`_io_with_resilience` retries per I/O call.
 
 ## Pre-test channel scan: fast and honest
 
@@ -438,7 +421,6 @@ Prompt "operator msg" # park runner until operator clicks OK
 ```
 GUI thread          MainWindow (PySide6 event loop)
 Worker thread 1     TestRunnerThread  — runs the .tst sequence
-Worker thread 2     MonitorThread     — emits V/A every 500 ms
 Short-lived         ReportWorker      — builds PDF after a run
 ```
 
@@ -453,7 +435,29 @@ Short-lived         ReportWorker      — builds PDF after a run
 
 `log_msg(str)`, `test_result(str, dict)`, `loop_started(int, int)`,
 `progress_total(int)`, `progress_test(int)`, `current_test(str)`,
-`prompt_request(str)`, `script_log(str)`, `finished` (built-in)
+`prompt_request(str)`, `script_log(str)`, `live_reading(dict)`, `finished` (built-in)
+
+### Live readings pane
+
+The bottom of the main window is a `QTabWidget`: **Live Readings** (every role)
+and **Messages** (the trace log, `VIEW_TRACE_LOG` only). The readings table has
+one **column** per UUT in the current run — 1 to 4, from the batch dialog — each
+headed by its load channel and serial (`CH2` / `SN-0002`), and one row each for
+Voltage [V], Current [A] and Power [W]. It is a run-time view only; values stay
+at their last reading after the run. There is no idle readout: the former
+right-hand "Power Supply" panel and its `MonitorThread` were removed.
+
+`live_reading` carries `{slot, serial}` plus any of `V`/`A`/`W`, and is partial
+by design (the UI merges). It reuses the runner's connection — the 3300G accepts
+only one — so no new connection is opened:
+
+* every `measvoltage`/`meascurrent`/`measpower` a script step executes is
+  forwarded;
+* a monitored `Delay` forwards each 300 ms voltage poll, and every
+  `_LIVE_READING_INTERVAL_MS` (1 s) also samples current and power (and voltage
+  on an unmonitored delay), **after** the monitoring check so it never delays a
+  trip. These samples are display-only: a failed read is swallowed and stops
+  sampling for the rest of that delay; it never fails the step.
 
 ---
 
@@ -467,7 +471,6 @@ DEFAULT_ADMIN_PASSWORD    # seeded only on first DB creation
 DEFAULT_ADMIN_EMPLOYEE_ID
 APP_VERSION               # shown in window title
 TESTER_SERIAL_NUMBER      # printed on reports
-SHOW_LIVE_MONITOR         # true/false
 SHOW_SEARCH_BAR           # true/false
 UUT_TYPES                 # comma-separated list for PreTest combo
 TEST_LOAD_MODEL           # <TestLoad><Model> in the CAMSTAR XML (3316G)

@@ -19,8 +19,8 @@ the rule must be amended in this document **first**, in a separate PR.
 
 The sanctioned exception is `PySide6.QtCore` (`QThread` / `Signal`) in the
 logic-layer thread classes that must participate in the Qt event system. As of
-the 2026-06-07 audit that is **two** files: `logic/test_engine.py`
-(`TestRunnerThread`) and `logic/monitor_engine.py` (`MonitorThread`). No
+2026-10-15 that is **one** file: `logic/test_engine.py` (`TestRunnerThread`);
+`logic/monitor_engine.py` was deleted with the idle live monitor. No
 logic/driver module may import `QtWidgets` or `QtGui`. New thread primitives or
 queues should prefer stdlib (`threading`, `queue`) unless they need to cross into
 Qt's signal system.
@@ -59,7 +59,7 @@ prefer a worker thread.
 the worker; the heavy ReportLab/PyPDF2 build happens off-thread. `closeEvent`
 now prompts the operator if a test is running, then calls `_shutdown_threads()`
 which stops the `TestRunnerThread`, waits up to 5 s, waits for any in-flight
-`ReportWorker`, and stops the `MonitorThread`.
+`ReportWorker`.
 
 The sanctioned `QGuiApplication.processEvents()` exception in
 `ScriptEditorDialog._set_busy` still applies; new code must prefer a worker

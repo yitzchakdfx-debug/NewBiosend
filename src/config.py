@@ -8,7 +8,6 @@ from __future__ import annotations
 from env import get_bool, get_list, get_required_str, get_str
 
 # --- Feature flags ---
-SHOW_LIVE_MONITOR: bool = get_bool("SHOW_LIVE_MONITOR", True)
 SHOW_SEARCH_BAR: bool = get_bool("SHOW_SEARCH_BAR", False)
 SHOW_NIGHT_MODE: bool = get_bool("SHOW_NIGHT_MODE", False)
 
@@ -52,8 +51,8 @@ TEST_LOAD_MODEL: str = get_str("TEST_LOAD_MODEL", "3316G")
 # --- Hardware backend ---
 # The station is either fully real or fully simulated, and every component must
 # agree: the 3300G accepts only ONE TCP connection, so a split decision means the
-# test runner and the live monitor compete for it and one fails as a phantom
-# comms fault -- or worse, one polls a simulator down the real-hardware path and
+# components that build drivers (test runner, channel scan, exit load-off)
+# compete for it and one fails as a phantom comms fault -- or worse, one polls a simulator down the real-hardware path and
 # reports invented numbers as measurements.
 #
 # This module holds only the `.env` baseline. It deliberately exposes no

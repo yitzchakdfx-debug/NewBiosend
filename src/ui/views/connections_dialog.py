@@ -45,9 +45,8 @@ class ConnectionsDialog(QDialog):
         # --- Hardware backend -------------------------------------------------
         # `drivers.factory` resolves the backend once per process and caches it,
         # so saving here genuinely takes effect only on the next launch -- which
-        # is what the note below promises. That is not merely cosmetic: the live
-        # monitor holds an open driver, the 3300G accepts one TCP connection, and
-        # the exit `loadoff` safety path builds a driver of its own. A mid-session
+        # is what the note below promises. That is not merely cosmetic: the 3300G
+        # accepts one TCP connection, and the exit `loadoff` safety path builds a driver of its own. A mid-session
         # change would let that path command a simulator and report "load off"
         # while a real load stayed energized with a UUT attached.
         root.addWidget(QLabel("<b>Hardware</b>"))

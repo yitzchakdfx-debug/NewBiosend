@@ -11,8 +11,7 @@ database: `logic.database_manager` imports `config`, so the dependency would be
 circular.
 
 Both settings are resolved ONCE per process and cached. They must not change
-under a running app: the live monitor holds an open driver, the 3300G accepts a
-single TCP connection, and the shutdown `loadoff` safety path builds a driver of
+under a running app: the 3300G accepts a single TCP connection, and the shutdown `loadoff` safety path builds a driver of
 its own -- if that path reached a different instrument (or a simulator) than the
 run used, it would report "Load off confirmed on exit." while a real load stayed
 energized with a UUT attached. The Connections dialog tells the admin a change
@@ -63,8 +62,8 @@ def _stored_settings() -> dict[str, str]:
 #: Backend resolved once per process. `None` until first asked.
 #
 # Deliberately cached, unlike the load address. The backend must be STABLE for
-# the process lifetime, because three things assume it is: the live monitor holds
-# an open driver, the 3300G accepts only one TCP connection, and the exit
+# the process lifetime, because two things assume it is: the 3300G accepts only one
+# TCP connection, and the exit
 # `loadoff` safety path builds a driver of its own. Re-resolving per call meant a
 # mid-session switch to the simulator could hand the exit path a MockHardware --
 # which reports "Load off confirmed on exit." while a real load stays energized
@@ -114,10 +113,10 @@ def reset_config_cache() -> None:
 def is_simulated() -> bool:
     """Whether every component must use the simulator.
 
-    The single answer for the whole app -- driver factory and live monitor alike.
-    Two call sites deciding this independently is what previously let an
-    unrecognised value simulate the test runner while the monitor dialled the
-    real instrument.
+    The single answer for the whole app. Two call sites deciding this
+    independently is what previously let an unrecognised value simulate the
+    test runner while the (since removed) idle monitor dialled the real
+    instrument.
     """
     return resolved_backend() in SIMULATED_BACKENDS
 

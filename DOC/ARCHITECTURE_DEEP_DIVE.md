@@ -8,7 +8,7 @@ contradicts the source, the source is wrong - fix the source, not the doc.
 > after substantial drift was found. The application has grown well beyond the
 > original "script runner + SQLite history" design: it now includes a test
 > **version catalog**, an **audit trail**, **encrypted system logs**, **PDF/CSV
-> reporting**, a **live monitor**, and a richer RBAC/UI surface. Where the code
+> reporting**, a **live readings pane**, and a richer RBAC/UI surface. Where the code
 > and prose disagreed, the prose was corrected.
 
 ---
@@ -22,7 +22,6 @@ contradicts the source, the source is wrong - fix the source, not the doc.
 | Persistence + RBAC   | `DatabaseManager` (`logic/database_manager.py`) | logic |
 | Encrypted logging    | `SecureLogger` (`logic/secure_logger.py`)   | logic    |
 | Reporting            | `ReportGenerator` (`logic/report_generator.py`) | logic |
-| Live monitor         | `MonitorThread` (`logic/monitor_engine.py`) | logic    |
 | Hardware abstraction | `BaseDriver` / `MockHardware` (`drivers/`)  | drivers  |
 | Composition root     | `MainWindow` (`ui/views/main_window.py`)    | ui       |
 | Config loader        | `env.py` → `config.py` / `version.py`      | top-level |
@@ -32,12 +31,11 @@ contradicts the source, the source is wrong - fix the source, not the doc.
 ## 1. Threading model
 
 The central design choice is that **the GUI thread never blocks on hardware
-timing**. Three `QThread` subclasses exist in total — two in `logic/` and one
+timing**. Two `QThread` subclasses exist in total — one in `logic/` and one
 in `ui/`:
 
 1. `TestRunnerThread` (`logic/test_engine.py`) — runs the active `.tst` sequence.
-2. `MonitorThread` (`logic/monitor_engine.py`) — emits simulated live readings on an interval.
-3. `ReportWorker` (`ui/report_worker.py`) — builds the PDF report off the GUI thread after a run.
+2. `ReportWorker` (`ui/report_worker.py`) — builds the PDF report off the GUI thread after a run.
 
 > Note: this means `logic/` now imports `PySide6.QtCore` in **two** files, not
 > one. `DEVELOPMENT_RULES.md` Rule 1's "only `test_engine.py`" exception has been
@@ -131,12 +129,12 @@ sequenceDiagram
 
 `stop()` also sets `_prompt_event`, so a parked thread can be cancelled.
 
-### 1.5 The live monitor
+### 1.5 Live readings
 
-`MonitorThread` (`logic/monitor_engine.py`) loops every `interval_ms` (default
-500), emitting `values_updated(dict)` with synthetic `V`/`A` readings.
-`MainWindow` starts it when `config.SHOW_LIVE_MONITOR` is true and stops it
-(`stop()` joins via `wait()`) on logout/close.
+There is no idle monitor thread (the former `MonitorThread` was removed on
+2026-10-15). During a run, `TestRunnerThread.live_reading(dict)` publishes V/A/W
+for the current unit over the runner's own connection, and
+`MainWindow._on_live_reading` fills the Live Readings tab — one column per UUT.
 
 ### 1.6 Thread wiring: report worker and shutdown
 
@@ -150,7 +148,6 @@ both `closeEvent` and `logout`:
 
 1. If `TestRunnerThread` is running: call `stop()`, `wait(5000)`.
 2. If `ReportWorker` is running: `wait(5000)`.
-3. If `MonitorThread` is running: `stop()`.
 
 `closeEvent` prompts the operator before aborting a live test run.
 
@@ -306,10 +303,11 @@ flowchart TB
     Row --> Left[Left sidebar: User box + Test Cases list + list actions]
     Row --> Center[Vertical splitter]
     Center --> Table[Results QTableWidget]
-    Center --> Trace[HW Trace QTextEdit + filter]
-    Row --> Right[Right scroll: InstrumentPanel + ControlPanel]
+    Center --> Bottom[Bottom QTabWidget]
+    Bottom --> Live[Live Readings: V/A/W per UUT, all roles]
+    Bottom --> Trace[Messages: HW Trace QTextEdit, VIEW_TRACE_LOG only]
+    Row --> Right[Right scroll: ControlPanel]
     Main -. spawns .-> Dialogs[Login / PreTest / SelectTest / SequenceEditor / ScriptEditor / VersionManager / AuditViewer / UserManagement / TestResult]
-    Main -. owns .-> Monitor[MonitorThread]
     Main -. owns .-> Runner[TestRunnerThread]
 ```
 
@@ -338,8 +336,8 @@ threads). Connections are established in `MainWindow._start_test_run`:
 | `TestRunnerThread.current_test(str)`           | `ControlPanelWidget.edit_current_test.setText`  |
 | `TestRunnerThread.prompt_request(str)`         | `MainWindow._on_prompt_request`                 |
 | `TestRunnerThread.script_log(str)`             | `MainWindow._on_script_log`                     |
+| `TestRunnerThread.live_reading(dict)`          | `MainWindow._on_live_reading`                   |
 | `TestRunnerThread.finished` (built-in)         | `MainWindow.on_tests_finished`                  |
-| `MonitorThread.values_updated(dict)`           | `InstrumentPanelWidget.update_values`           |
 | `ReportWorker.archived(str)`                   | `MainWindow.append_trace` (lambda)              |
 | `ReportWorker.failed(str)`                     | `MainWindow.append_trace` (lambda)              |
 | `ReportWorker.finished` (built-in)             | `ReportWorker.deleteLater`                      |
