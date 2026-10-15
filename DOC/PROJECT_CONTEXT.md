@@ -522,6 +522,35 @@ LOAD_RESISTANCE_50W_OHM   # 12.5 — legacy scripts still named "50W"
 
 ---
 
+## Operator Stop produces no report
+
+A run the operator stops with **Stop** is neither saved nor reported (decided
+2026-10-15). Before this, the interrupted step was recorded as FAIL and the
+rest N/A, the run went into `test_runs`, and a PDF/XML was archived with nothing
+saying it had been stopped — indistinguishable from a faulty supply, in CAMSTAR
+too. Spec §1.1.4.5 asks for a report when a *test fails*; a Stop is not one.
+
+* A unit counts as stopped only if Stop arrived before its tests finished.
+  `_run_single_unit_inner` captures `self._stop_requested` *before* the `Always`
+  teardown, so a Stop during teardown keeps a complete result and its report.
+* A stopped unit skips `_save_record` and returns a `BatchUnitReport` with
+  `aborted_by_operator=True` (`overall_result="STOPPED"`). The rows stay on the
+  object for the on-screen table only.
+* `_finalize_run_reports` checks that flag first — ahead of the Maintenance and
+  "Save as log" gates — and also clears `_last_run_meta`, so the Results menu
+  cannot export the stopped run manually.
+* Instead of the PASS/FAIL banner the operator sees "Run stopped by operator. No
+  report was saved for: …". In a parallel run, units that finished before the
+  Stop keep their reports. The audit log records "Test run stopped by operator"
+  with the serials, and the batch PASS/FAIL counter ignores stopped units.
+* Load safety is unchanged: teardown, `_force_load_off` and the
+  "LOAD MAY STILL BE ON" alert all still run.
+
+`should_generate_report` is a different, older flag: it is set on the up-front
+polarity failure path but `_finalize_run_reports` never reads it, so that path
+still archives a report despite logging "Skipping report". Left as is pending a
+decision; `aborted_by_operator` is deliberately separate so as not to change it.
+
 ## Shutdown must never depend on an operator answer
 
 Closing the app while a `PromptYesNo` was pending used to leave the process

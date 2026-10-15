@@ -889,6 +889,18 @@ class MainWindow(QMainWindow):
         th = self.test_thread
         if th is None:
             return
+        # Checked first, ahead of the role and "Save as log" gates: an operator
+        # Stop is not a unit result, so nothing about it may be archived or left
+        # cached for a manual export from the Results menu.
+        reports = th.report_snapshots()
+        if reports and reports[-1].aborted_by_operator:
+            self._last_run_meta = None
+            self._last_run_rows = []
+            self.append_trace(
+                f"{reports[-1].unit.serial_number}: stopped by operator — "
+                "no report saved."
+            )
+            return
         meta, rows = th.report_snapshot()
         logical_name = f"{self._catalog_test_name} {getattr(self, '_catalog_version', '')}".strip()
         meta["test_program_name"] = logical_name
@@ -1456,6 +1468,8 @@ class MainWindow(QMainWindow):
         self._set_unit_header_row(row, serial_number, index, total, position_label)
 
     def _on_unit_finished(self, payload: dict) -> None:
+        if payload.get("aborted"):
+            return  # stopped by the operator: neither a pass nor a fail
         passed = bool(payload.get("passed"))
         if passed:
             self._batch_pass_count += 1
@@ -1892,6 +1906,8 @@ class MainWindow(QMainWindow):
         self._parallel_shared_driver = None
 
         overall_passed = True
+        stopped = self._stopped_serials(self._parallel_threads)
+        total_units = len(self._parallel_threads)
         original_thread = self.test_thread
         for th in self._parallel_threads:
             self.test_thread = th
@@ -1915,10 +1931,16 @@ class MainWindow(QMainWindow):
 
         try:
             DatabaseManager().log_audit_action(
-                "Test run completed (parallel)",
+                "Test run stopped by operator (parallel)"
+                if stopped
+                else "Test run completed (parallel)",
                 username=str(self._user_info.get("username", "")),
                 employee_id=str(self._user_info.get("employee_id", "")),
-                details=f"overall={'PASS' if overall_passed else 'FAIL'}",
+                details=(
+                    f"not reported={stopped}"
+                    if stopped
+                    else f"overall={'PASS' if overall_passed else 'FAIL'}"
+                ),
             )
         except Exception:
             pass
@@ -1929,23 +1951,27 @@ class MainWindow(QMainWindow):
         self._parallel_finished_count = 0
         self.control_panel.hide_parallel_progress()
 
-
         self.control_panel.set_running_state(False)
         self.control_panel.edit_part_number.setReadOnly(False)
         if self._active_script_path.is_file():
             self.control_panel.edit_part_number.setReadOnly(True)
         self._unlock_pre_test_fields()
         self.append_trace("All parallel sequences complete.")
-        self.sequence_finished.emit(overall_passed)
+        if stopped:
+            self._show_stopped_message(
+                stopped, some_completed=len(stopped) < total_units
+            )
+        else:
+            self.sequence_finished.emit(overall_passed)
 
     def on_tests_finished(self) -> None:
         th = self.test_thread
         if th is None:
             return
 
-
         self.append_trace("Sequence Complete.")
 
+        stopped = self._stopped_serials([th])
         overall_passed = False
         try:
             self._finalize_run_reports()
@@ -1956,12 +1982,13 @@ class MainWindow(QMainWindow):
                     str(meta.get("overall_result", "")).strip().upper() == "PASS"
                 )
                 DatabaseManager().log_audit_action(
-                    "Test run completed",
+                    "Test run stopped by operator" if stopped else "Test run completed",
                     username=str(self._user_info.get("username", "")),
                     employee_id=str(self._user_info.get("employee_id", "")),
                     details=(
                         f"overall={meta.get('overall_result', '?')} "
                         f"script={meta.get('test_program_name', '')}"
+                        + (f" not reported={stopped}" if stopped else "")
                     ),
                 )
             except Exception:
@@ -1975,10 +2002,33 @@ class MainWindow(QMainWindow):
         self._unlock_pre_test_fields()
         self.test_thread = None
 
-        self.sequence_finished.emit(overall_passed)
+        if stopped:
+            self._show_stopped_message(stopped)
+        else:
+            self.sequence_finished.emit(overall_passed)
 
     def _show_result_dialog(self, passed: bool) -> None:
         TestResultDialog(passed, parent=self).exec()
+
+    @staticmethod
+    def _stopped_serials(threads: list[TestRunnerThread]) -> list[str]:
+        """Serials of units whose tests the operator's Stop cut short."""
+        return [
+            report.unit.serial_number
+            for th in threads
+            for report in th.report_snapshots()
+            if report.aborted_by_operator
+        ]
+
+    def _show_stopped_message(self, serials: list[str], *, some_completed: bool = False) -> None:
+        """Shown instead of the PASS/FAIL banner: a stopped run has no verdict."""
+        text = (
+            "Run stopped by operator.\n\n"
+            f"No report was saved for: {', '.join(serials)}."
+        )
+        if some_completed:
+            text += "\n\nUnits that finished before the stop were reported normally."
+        QMessageBox.information(self, "Run stopped", text)
 
     def _on_select_all_tests(self) -> None:
         for i in range(self.test_list.count()):

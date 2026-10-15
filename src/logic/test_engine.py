@@ -372,6 +372,7 @@ class TestRunnerThread(QThread):
                         "position_label": unit.position_label,
                         "passed": report.overall_result == "PASS",
                         "report_generated": report.should_generate_report,
+                        "aborted": report.aborted_by_operator,
                     }
                 )
         finally:
@@ -779,6 +780,11 @@ class TestRunnerThread(QThread):
         if abort_loops:
             self._backfill_skipped(record, unit, normal_steps, loop_number)
 
+        # Captured before teardown on purpose: a Stop that arrives while the
+        # `Always` steps run comes after every test finished, so that unit's
+        # result is complete and keeps its report.
+        stopped = self._stop_requested
+
         # Teardown: always run `Always` steps, regardless of abort/stop, so the
         # load is turned off even when an earlier critical step failed.
         for step in teardown_steps:
@@ -786,8 +792,29 @@ class TestRunnerThread(QThread):
         # The engine-level `loadoff` happens in `_run_single_unit`'s `finally`,
         # so it covers this path and every early return alike.
 
-        record.overall_passed = overall_passed and not self._stop_requested
+        record.overall_passed = overall_passed and not stopped
         record.end_time = datetime.now()
+        if stopped:
+            # An operator Stop is not a unit failure. Archiving it would leave a
+            # FAIL record and report indistinguishable from a faulty supply (in
+            # CAMSTAR too), so the run is neither saved nor reported. The rows
+            # stay on the report object for the on-screen table only.
+            self._emit_log(
+                "info",
+                f"{unit.serial_number}: run stopped by operator — not saved, no report.",
+            )
+            return BatchUnitReport(
+                unit=unit,
+                record=record,
+                tester_name=self.tester_name,
+                employee_id=self.employee_id,
+                uut_type=self.uut_type,
+                test_program_name=self._logical_script_name,
+                overall_result="STOPPED",
+                aborted_by_operator=True,
+                steps_selected=self._steps_selected,
+                steps_available=self._steps_available,
+            )
         self._save_record(record)
         return BatchUnitReport(
             unit=unit,

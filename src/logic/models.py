@@ -142,6 +142,9 @@ class BatchUnitReport:
     overall_result: str
     alert_message: str = ""
     should_generate_report: bool = True
+    #: The operator pressed Stop before this unit's tests finished. Such a run is
+    #: neither saved to the database nor reported (it is not a unit failure).
+    aborted_by_operator: bool = False
     #: Steps actually run vs. steps the script defines. A Technician may untick
     #: steps before a run (`Capability.SELECT_STEPS`), and deselected steps are
     #: filtered out before execution — so unlike a step skipped *after* a
