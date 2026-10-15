@@ -55,8 +55,11 @@ def user_tmp_path(*parts: str) -> Path:
 
 
 # `biosend_test.tst` is the default script (see `_DEFAULT_SCRIPT_NAME`), so a
-# fresh install must have it on disk before the main window opens.
-_SEED_FILES = ("limits.json", "biosend_test.tst", "sequence.tst", "demo_system.tst")
+# fresh install must have it on disk before the main window opens. It is the only
+# seed: the demo scripts that used to be here are not spec-conformant, and
+# `limits.json` no longer exists anywhere in the repo (it was legacy/unused, and
+# naming a missing file here made the seed step silently skip it every launch).
+_SEED_FILES = ("biosend_test.tst",)
 _seeded = False
 
 

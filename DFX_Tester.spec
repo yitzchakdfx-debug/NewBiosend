@@ -33,8 +33,15 @@ datas = [
     (str(SRC / "ui" / "assets" / "dark_theme.qss"), "ui/assets"),
     (str(SRC / "ui" / "assets" / "light_theme.qss"), "ui/assets"),
     (str(SRC / "ui" / "assets" / "style.qss"), "ui/assets"),
-    (str(SRC / "data" / "sequence.tst"), "data"),
-    (str(SRC / "data" / "demo_system.tst"), "data"),
+    # Ship ONLY the spec-conformant script. It is `_DEFAULT_SCRIPT_NAME` in
+    # main_window.py, so the app opens it on a fresh install -- yet the bundle
+    # used to carry `sequence.tst` (a 5 V demo) and `demo_system.tst` instead and
+    # omit this one, leaving a new station with no runnable test. Extra scripts
+    # are a hazard on a production floor: an operator can pick one whose limits
+    # look right but whose load and durations are not (see the deleted
+    # biosend_test_TEMP.tst, which "passed" a 300 W / 30 min burn-in in 30 s at
+    # ~6 W). Admins can still import other versions through the Version Manager.
+    (str(SRC / "data" / "biosend_test.tst"), "data"),
 ]
 
 # Force-include cryptography backends — they are lazy imports that
