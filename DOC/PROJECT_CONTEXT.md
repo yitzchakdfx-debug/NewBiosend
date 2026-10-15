@@ -370,6 +370,19 @@ successful, confirmed shutdown.
 `Delay <ms> <lo> <hi>` polls the voltage every 300 ms for the whole wait. Two
 distinct failures end the run, and the trace log tells them apart:
 
+**The wait is timed by the wall clock** (`time.monotonic()`, since 2026-10-15),
+not by counting polls. Counting added a fixed 300 ms per poll and ignored the
+time each poll's instrument queries took, so every delay overran: measured on
+the simulator, a 3 s delay took 4.7 s; on the station a "30 min" burn-in ran an
+estimated 10-20 % long (more in a parallel run, where all units queue on one
+connection), and the t=5/15/30 labels on the report were wrong. Each poll now
+sleeps only what remains until its 300 ms slot and the loop exits at the
+deadline (3 s delay: 3.2 s including thread start-up). If a poll overruns its
+slot the next one starts immediately; if the loop falls more than a slot behind
+(a slow reconnect) the cadence restarts from now instead of firing a burst. The
+live-readings sample is timed the same way. Not covered: the current, power and
+resistance steps *between* burn-in delays still add a few seconds per point.
+
 * `_MonitorOutOfRange` — the UUT left 22.8–25.2 V. The offending reading is
   recorded as the step's measurement.
 * `_MonitorReadFailed` — the *instrument* stopped answering. Raised only after

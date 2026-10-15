@@ -1276,18 +1276,36 @@ class TestRunnerThread(QThread):
             total_ms = int(float(args[0]))
             monitor_min = float(args[1]) if len(args) >= 2 else None
             monitor_max = float(args[2]) if len(args) >= 3 else None
-            elapsed_ms = 0
             # Poll/monitor cadence during the wait. 300 ms keeps continuous
             # voltage monitoring responsive without flooding the load's comms
             # link with queries over long burn-in delays.
-            chunk = 300
+            chunk_s = 0.3
             monitored = monitor_min is not None and monitor_max is not None
-            since_live_ms = _LIVE_READING_INTERVAL_MS  # sample on the first poll
+            live_interval_s = _LIVE_READING_INTERVAL_MS / 1000
+            last_live = float("-inf")  # sample on the first poll
             live_ok = True
-            while elapsed_ms < total_ms and not self._stop_requested:
-                self.msleep(min(chunk, total_ms - elapsed_ms))
-                elapsed_ms += chunk
-                self.progress_test.emit(min(99, int(elapsed_ms * 100 / total_ms)))
+            # Timed against the wall clock, not by counting polls. Counting
+            # added a fixed 300 ms per poll but ignored the time each poll's
+            # instrument queries took, so a "30 min" burn-in ran 10-20 % long
+            # (more in a parallel run, where every unit queues on one
+            # connection) and its t=5/15/30 report labels were wrong. Each poll
+            # now sleeps only what remains until the next 300 ms slot, and the
+            # wait ends at the deadline however slow the comms are.
+            start = time.monotonic()
+            deadline = start + total_ms / 1000
+            next_poll = start
+            while not self._stop_requested:
+                now = time.monotonic()
+                if now >= deadline:
+                    break
+                if next_poll < now - chunk_s:
+                    # Fell behind (e.g. a slow reconnect): resume the cadence
+                    # from now rather than firing a burst of back-to-back polls.
+                    next_poll = now
+                next_poll += chunk_s
+                self.msleep(max(0, int((min(next_poll, deadline) - now) * 1000)))
+                elapsed_ms = (time.monotonic() - start) * 1000
+                self.progress_test.emit(min(99, int(elapsed_ms * 100 / max(1, total_ms))))
                 if monitored:
                     # A read failure here has already survived the driver's
                     # reconnect budget (`_io_with_resilience`: retry + reconnect
@@ -1312,9 +1330,8 @@ class TestRunnerThread(QThread):
                         )
                 # After the monitoring check, so the extra queries never delay
                 # a trip. Voltage is skipped when monitoring just read it.
-                since_live_ms += chunk
-                if live_ok and since_live_ms >= _LIVE_READING_INTERVAL_MS:
-                    since_live_ms = 0
+                if live_ok and time.monotonic() - last_live >= live_interval_s:
+                    last_live = time.monotonic()
                     live_ok = self._sample_live_readings(include_voltage=not monitored)
             return None
 
