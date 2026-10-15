@@ -62,8 +62,15 @@ Search order:
 2. Parent of the above (repo root in dev).
 3. `find_dotenv(usecwd=True)` fallback.
 
-All keys are optional; the app starts with safe built-in defaults if `.env` is
-absent. **Never commit `.env`** — it contains site-specific secrets. See
+Most keys are optional and fall back to safe built-in defaults, but the secret
+keys read via `get_required_str()` (`LOG_ENCRYPTION_PASSWORD`,
+`ADMIN_REPORT_PASSWORD`, `DEFAULT_ADMIN_PASSWORD`) are mandatory — the app
+refuses to start without them. `python-dotenv` itself is mandatory too: if it is
+not installed in the running interpreter (typically because the venv is not
+active) `.env` is never read, and the resulting error names the missing package
+rather than the variable.
+
+**Never commit `.env`** — it contains site-specific secrets. See
 `DOC/.env.example` for the full key list. `python-dotenv` is listed in
 `requirements.txt` and added to `hiddenimports` in `DFX_Tester.spec`.
 

@@ -16,11 +16,14 @@ _SRC = Path(__file__).resolve().parent
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from ui.views.login_dialog import LoginDialog
-from ui.views.main_window import MainWindow
 from logic.file_lock import AlreadyRunningError, SingleInstanceLock
-from logic.report_templates import ensure_templates_seeded
 from paths import ensure_user_data_seeded, resource_path, user_data_path, user_tmp_path
+
+# NOT imported here: anything that reaches `config`, which validates `.env` at
+# import time and raises on a bad value (e.g. HARDWARE_BACKEND=simulatorr). At
+# module scope that exception escapes before QApplication exists, so a windowed
+# EXE would die silently with no message and no console to print to. `main()`
+# imports these after the app object exists and shows the error in a dialog.
 
 
 def _sweep_tmp() -> None:
@@ -40,10 +43,26 @@ def main() -> int:
         print(f"Note: Could not set AppUserModelID: {e}")
 
     ensure_user_data_seeded()
-    ensure_templates_seeded()
     _sweep_tmp()
 
     app = QApplication(sys.argv)
+
+    # Deferred so a configuration error can be shown rather than killing a
+    # windowless EXE in silence. `config` validates `.env` on import.
+    try:
+        from logic.report_templates import ensure_templates_seeded
+        from ui.views.login_dialog import LoginDialog
+        from ui.views.main_window import MainWindow
+
+        ensure_templates_seeded()
+    except Exception as exc:
+        QMessageBox.critical(
+            None,
+            "DFX Tester — configuration error",
+            f"The application cannot start:\n\n{exc}",
+        )
+        return 1
+
     icon_path = resource_path("ui", "assets", "icons", "DFXAppIcon.png")
     if icon_path.is_file():
         app.setWindowIcon(QIcon(str(icon_path)))
@@ -93,8 +112,18 @@ def _exit_now(code: int) -> None:
     released the load and flushed the reports — so nothing is cut short here
     that was not already finished or already hung.
     """
-    sys.stdout.flush()
-    sys.stderr.flush()
+    # Best-effort only, and it must never be what stops the exit. In a windowed
+    # PyInstaller build (`console=False`) there is no console attached, so
+    # `sys.stdout`/`sys.stderr` are None and calling .flush() on them raised
+    # AttributeError *after* the window had closed -- the user saw an "Unhandled
+    # exception in script" box on every clean exit. Dev runs have real streams,
+    # so this only ever failed in the packaged app.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream is not None:
+                stream.flush()
+        except Exception:
+            pass
     # os._exit skips interpreter teardown, which is exactly the point: teardown
     # is what blocks on the stuck thread.
     os._exit(code)
