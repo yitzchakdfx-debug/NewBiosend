@@ -546,6 +546,15 @@ too. Spec §1.1.4.5 asks for a report when a *test fails*; a Stop is not one.
 * Load safety is unchanged: teardown, `_force_load_off` and the
   "LOAD MAY STILL BE ON" alert all still run.
 
+**A run that tested no unit produces no report either.** If the runner ends
+with no unit report at all (connection failed after the retry budget, script
+failed to load, Stop before the first unit), `_finalize_run_reports` returns
+without archiving and clears `_last_run_meta`. This used to write an empty PDF
+under `results/unknown/unknown/` and raise a spurious "XML not generated"
+modal. `on_tests_finished` shows "Run did not start … No report was generated"
+instead of a FAIL banner (an Operator cannot see the Messages tab holding the
+reason), and audits "Test run ended before any unit was tested".
+
 `should_generate_report` is a different, older flag: it is set on the up-front
 polarity failure path but `_finalize_run_reports` never reads it, so that path
 still archives a report despite logging "Skipping report". Left as is pending a

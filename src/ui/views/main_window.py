@@ -893,7 +893,16 @@ class MainWindow(QMainWindow):
         # Stop is not a unit result, so nothing about it may be archived or left
         # cached for a manual export from the Results menu.
         reports = th.report_snapshots()
-        if reports and reports[-1].aborted_by_operator:
+        if not reports:
+            # The run ended before any unit was tested (no connection, script
+            # failed to load, Stop before the first unit). There is nothing to
+            # report; archiving here produced empty PDFs under unknown/unknown/
+            # plus a spurious "XML not generated" modal.
+            self._last_run_meta = None
+            self._last_run_rows = []
+            self.append_trace("No unit was tested — no report generated.")
+            return
+        if reports[-1].aborted_by_operator:
             self._last_run_meta = None
             self._last_run_rows = []
             self.append_trace(
@@ -1972,6 +1981,7 @@ class MainWindow(QMainWindow):
         self.append_trace("Sequence Complete.")
 
         stopped = self._stopped_serials([th])
+        nothing_tested = not th.report_snapshots()
         overall_passed = False
         try:
             self._finalize_run_reports()
@@ -1981,8 +1991,14 @@ class MainWindow(QMainWindow):
                 overall_passed = (
                     str(meta.get("overall_result", "")).strip().upper() == "PASS"
                 )
+                if nothing_tested:
+                    action = "Test run ended before any unit was tested"
+                elif stopped:
+                    action = "Test run stopped by operator"
+                else:
+                    action = "Test run completed"
                 DatabaseManager().log_audit_action(
-                    "Test run stopped by operator" if stopped else "Test run completed",
+                    action,
                     username=str(self._user_info.get("username", "")),
                     employee_id=str(self._user_info.get("employee_id", "")),
                     details=(
@@ -2002,7 +2018,16 @@ class MainWindow(QMainWindow):
         self._unlock_pre_test_fields()
         self.test_thread = None
 
-        if stopped:
+        if nothing_tested:
+            # A FAIL banner here would blame a unit that was never tested, and
+            # an Operator cannot see the Messages tab that holds the reason.
+            QMessageBox.information(
+                self,
+                "Run did not start",
+                "The run ended before any unit was tested (for example, the "
+                "electronic load did not respond).\n\nNo report was generated.",
+            )
+        elif stopped:
             self._show_stopped_message(stopped)
         else:
             self.sequence_finished.emit(overall_passed)
