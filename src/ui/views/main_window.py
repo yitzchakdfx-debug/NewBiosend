@@ -1208,15 +1208,7 @@ class MainWindow(QMainWindow):
         step = next((s for s in document.steps if s.name == step_name), None) if document else None
         if step is None:
             return None
-        total_ms = 0.0
-        for cmd in step.commands:
-            args = cmd.get("args") or []
-            if str(cmd.get("cmd", "")).lower() == "delay" and args:
-                try:
-                    total_ms += float(args[0])
-                except (TypeError, ValueError):
-                    pass
-        return total_ms / 1000 if total_ms else None
+        return TestRunnerThread.step_delay_s(step) or None
 
     def _reset_live_readings(self, units: list[tuple[int, str]]) -> None:
         """Rebuild the live table with one column per (slot_index, serial), in slot order.

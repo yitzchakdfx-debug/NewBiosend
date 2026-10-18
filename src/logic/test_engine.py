@@ -81,6 +81,11 @@ _POLARITY_SETTLE_MS = 3000
 # at a gentler rate than the 300 ms monitoring cadence.
 _LIVE_READING_INTERVAL_MS = 1000
 
+# Expected time a step takes beyond its `Delay`s (instrument round-trips),
+# used only to weight the Total progress bar. Rough is fine: next to the 1-15
+# minute burn-in waits it only keeps the short steps from counting as zero.
+_STEP_BASE_S = 2.0
+
 #: Measurement commands whose result is a live V/A/W reading, mapped to the key
 #: the live-readings pane displays it under.
 _LIVE_READING_KEYS: dict[str, str] = {
@@ -246,6 +251,11 @@ class TestRunnerThread(QThread):
         self._reports: list[BatchUnitReport] = []
         self._current_unit: BatchUnit | None = None
         self._current_step: TestStep | None = None
+        # Time-weighted Total progress for the current unit (see `_emit_total`).
+        self._progress_total_s = 0.0
+        self._progress_done_s = 0.0
+        self._step_weight_s = 0.0
+        self._progress_unit = (1, 1)  # (unit_index, total_units)
         self._current_test_name = ""
         if batch_units:
             self._batch_units = list(batch_units)
@@ -291,6 +301,32 @@ class TestRunnerThread(QThread):
                 )
                 return self._hw.execute_command(command, args)
         return self._hw.execute_command(command, args)
+
+    @staticmethod
+    def step_delay_s(step: TestStep) -> float:
+        """Total `Delay` time of a step in seconds (0 if it waits for nothing)."""
+        total_ms = 0.0
+        for cmd in step.commands:
+            args = cmd.get("args") or []
+            if str(cmd.get("cmd", "")).lower() == "delay" and args:
+                try:
+                    total_ms += float(args[0])
+                except (TypeError, ValueError):
+                    pass
+        return total_ms / 1000
+
+    def _emit_total(self, step_fraction: float = 0.0) -> None:
+        """Emit the Total bar: expected time done so far over the unit's total.
+
+        `step_fraction` is how far into the current step's weight we are, so the
+        bar moves during a long `Delay` instead of jumping when it ends.
+        """
+        if not self._progress_total_s:
+            return
+        done = self._progress_done_s + step_fraction * self._step_weight_s
+        fraction = min(1.0, done / self._progress_total_s)
+        unit_index, total_units = self._progress_unit
+        self.progress_total.emit(int(((unit_index - 1) + fraction) / max(1, total_units) * 100))
 
     def _emit_live(self, values: dict[str, float]) -> None:
         """Publish V/A/W readings for the current unit to the live-readings pane."""
@@ -666,8 +702,15 @@ class TestRunnerThread(QThread):
                     steps_available=self._steps_available,
                 )
 
-        total_steps = len(normal_steps) * self._loop_count
-        completed = 0
+        # The Total bar is weighted by expected time, not by step count: the
+        # script's 19 steps include four waits that hold ~31 of its ~32 minutes,
+        # so counting steps showed 36 % one minute into a half-hour run.
+        weights = [self.step_delay_s(s) + _STEP_BASE_S for s in normal_steps]
+        polarity_s = _POLARITY_SETTLE_MS / 1000 if polarity_pending else 0.0
+        self._progress_total_s = (sum(weights) + polarity_s) * self._loop_count
+        self._progress_done_s = 0.0
+        self._step_weight_s = 0.0
+        self._progress_unit = (unit_index, total_units)
         abort_loops = False
         overall_passed = True
         loop_number = 1
@@ -681,12 +724,13 @@ class TestRunnerThread(QThread):
                 self.loop_started.emit(loop_number, self._loop_count)
                 self._emit_log("info", f"--- Loop {loop_number}/{self._loop_count} ---")
 
-            for step in normal_steps:
+            for step_idx, step in enumerate(normal_steps):
                 self._pause_event.wait()
                 if self._stop_requested:
                     abort_loops = True
                     break
 
+                self._step_weight_s = weights[step_idx]
                 self._current_test_name = step.name
                 self.current_test.emit(step.name)
                 self.progress_test.emit(0)
@@ -733,14 +777,9 @@ class TestRunnerThread(QThread):
                     )
 
                 self.progress_test.emit(100)
-                completed += 1
-                step_progress = int((completed / max(1, total_steps)) * 100)
-                self.progress_total.emit(
-                    int(
-                        (((unit_index - 1) + (step_progress / 100.0)) / max(1, total_units))
-                        * 100
-                    )
-                )
+                self._progress_done_s += self._step_weight_s
+                self._step_weight_s = 0.0
+                self._emit_total()
 
                 if step.is_critical and not passed:
                     self._emit_log(
@@ -755,7 +794,10 @@ class TestRunnerThread(QThread):
                 # the LED step has passed, before any load is applied.
                 if polarity_pending and self.is_led_step(step):
                     polarity_pending = False
-                    if not self._check_polarity(record, unit):
+                    polarity_ok = self._check_polarity(record, unit)
+                    self._progress_done_s += polarity_s
+                    self._emit_total()
+                    if not polarity_ok:
                         msg = (
                             f"Polarity check failed for {unit.serial_number}"
                             f" at {unit.position_label}."
@@ -1312,6 +1354,8 @@ class TestRunnerThread(QThread):
                 self.msleep(max(0, int((min(next_poll, deadline) - now) * 1000)))
                 elapsed_ms = (time.monotonic() - start) * 1000
                 self.progress_test.emit(min(99, int(elapsed_ms * 100 / max(1, total_ms))))
+                if self._step_weight_s:
+                    self._emit_total(min(1.0, elapsed_ms / 1000 / self._step_weight_s))
                 if monitored:
                     # A read failure here has already survived the driver's
                     # reconnect budget (`_io_with_resilience`: retry + reconnect

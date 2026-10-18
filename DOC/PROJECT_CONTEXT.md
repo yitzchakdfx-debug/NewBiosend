@@ -488,6 +488,14 @@ the end of the run (bar full) and stay until the next one. They replaced the sha
 "Current" field and single "Test" bar, which in a parallel run showed whichever
 unit reported last.
 
+**The Total bar is weighted by expected time** (2026-10-15), not by step count.
+Each step weighs its `Delay` total (`TestRunnerThread.step_delay_s`) plus
+`_STEP_BASE_S` (2 s), the polarity gate its 3 s settle; `_emit_total` reports
+time done over the unit's total and is also called during a `Delay`, so the bar
+moves through the long waits. Counting steps showed 36 % one minute into the
+~32-minute script (7 of 19 steps done, but the four waits hold ~31 minutes);
+now that point reads 4 %, the end of the 15-minute wait ~51 %.
+
 ### Live readings pane
 
 The bottom of the main window is a `QTabWidget`: **Live Readings** (every role)
