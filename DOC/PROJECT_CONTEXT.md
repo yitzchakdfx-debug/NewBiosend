@@ -478,6 +478,35 @@ Short-lived         ReportWorker      — builds PDF after a run
 `progress_total(int)`, `progress_test(int)`, `current_test(str)`,
 `prompt_request(str)`, `script_log(str)`, `live_reading(dict)`, `finished` (built-in)
 
+### Test list: one row per spec test
+
+The left-hand list shows the spec's four tests (Appendix A, Tests 1-4), not the
+script's 20 steps (2026-10-18). `logic/test_groups.build_test_groups` derives
+the groups from the script itself: `Report X` steps form test X, a `Hidden` step
+without `Report` (a Setup) joins the test after it, `Always` steps are never
+listed and always run, and a visible step without `Report` (older scripts) is
+its own row. The engine-run Polarity Check gets a synthetic row after the LED
+test; it is fixed (not uncheckable) because production always runs that gate.
+Each row has a detail line — CR Ω from the Setup's `setresistance`, time points
+from `TimePoint`, expected text from the PDF template — so it follows edits.
+
+Selection is by whole test only. `_selected_test_names()` expands the ticked
+tests into their steps plus the teardown, so the engine receives exactly what it
+did before; a test can no longer lose its Setup (which ran measurements with the
+load never switched on) and Cleanup can no longer be unticked. Burn-In's
+t1/t2/t3 are deliberately not separate rows: the waits are cumulative, so
+skipping one would shorten the burn-in and mislabel later time points. Maintenance
+"Run Step" runs a whole test; for the Polarity row it passes
+`polarity_check=True`, which makes a `production_flow=False` run perform
+`_check_polarity`. Rows are measured by `WrapItemDelegate` so wrapped detail
+lines are not cut.
+
+The LED row stays uncheckable by roles holding `SELECT_STEPS` (Technician,
+Maintenance, Admin) — a deliberate decision of 2026-10-18, pending the
+customer's answer on Technician privileges. A run without it skips the
+pre-test "LED ON" column, omits LED from the report, and is disclosed as a
+partial run. Do not lock it without revisiting that decision.
+
 ### Per-unit progress rows
 
 The control panel's status group has one row per UUT in the run (1-4, rebuilt

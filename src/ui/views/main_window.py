@@ -43,13 +43,15 @@ from config import LOAD_SERIALS, SHOW_NIGHT_MODE, SHOW_SEARCH_BAR
 from drivers.base_driver import BaseDriver, HardwareError
 from drivers.factory import create_driver, resolve_station_config
 from logic.database_manager import DatabaseManager
+from logic.report_templates import read_pdf_template
+from logic.test_groups import TestGroup, always_step_names, build_test_groups
 from ui.report_worker import ReportWorker
 from logic.models import ScriptDocument, TestResultPayload
 from logic.report_generator import ReportGenerator, sanitize_path_segment
 from logic.roles import Capability, can
 from logic.script_manager import ScriptManager, ScriptParseError
 from logic.secure_logger import get_secure_logger
-from logic.test_engine import TestRunnerThread
+from logic.test_engine import POLARITY_SETTLE_S, TestRunnerThread
 from paths import resource_path, user_data_path
 from ui.views.audit_viewer_dialog import AuditViewerDialog
 from ui.views.connections_dialog import ConnectionsDialog
@@ -64,6 +66,7 @@ from ui.views.user_management_dialog import UserManagementDialog
 from ui.views.version_manager_dialog import VersionManagerDialog
 from ui.widgets.control_panel import ControlPanelWidget, UnitProgressRow
 from ui.widgets.result_row_delegate import ResultRowDelegate
+from ui.widgets.wrap_item_delegate import WrapItemDelegate
 from version import __version__
 
 
@@ -627,6 +630,15 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
         )
         self.test_list.setItemAlignment(Qt.AlignmentFlag.AlignTop)
+        # Each row carries a detail line (load, time points) that can be wider
+        # than the sidebar; wrap it instead of cutting it off.
+        self.test_list.setWordWrap(True)
+        self.test_list.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self.test_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Re-measure rows when the sidebar is resized, with a delegate that
+        # accounts for the check indicator (Qt's default cuts the last line).
+        self.test_list.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.test_list.setItemDelegate(WrapItemDelegate(self.test_list))
 
         self.left_sidebar = QWidget()
         self.left_sidebar.setMinimumWidth(220)
@@ -757,6 +769,12 @@ class MainWindow(QMainWindow):
         )
         self._live_columns: dict[int, int] = {}  # slot_index -> table column
         self._unit_rows: dict[int, UnitProgressRow] = {}  # slot_index -> progress row
+        self._test_groups: list[TestGroup] = []  # one per test-list row
+        # Batch counters. Initialised here, not only in `_start_test_run`: a
+        # Maintenance "Run Step" emits unit_finished without ever starting a
+        # production run, and the counter slot raised AttributeError.
+        self._batch_pass_count = 0
+        self._batch_fail_count = 0
 
         self.bottom_tabs = QTabWidget()
         self.bottom_tabs.setObjectName("bottom_tabs")
@@ -849,9 +867,11 @@ class MainWindow(QMainWindow):
         self._apply_theme_file()
         self._update_icons(self.is_dark_mode)
 
-    def _apply_test_item_permissions(self, item: QListWidgetItem) -> None:
+    def _apply_test_item_permissions(self, item: QListWidgetItem, *, fixed: bool = False) -> None:
+        """`fixed` rows (the engine's Polarity Check) are always on: in a
+        production run that gate is mandatory, so it cannot be unticked."""
         flags = item.flags() | Qt.ItemFlag.ItemIsUserCheckable
-        if not self._can(Capability.SELECT_STEPS):
+        if fixed or not self._can(Capability.SELECT_STEPS):
             flags &= ~Qt.ItemFlag.ItemIsUserCheckable
         item.setFlags(flags)
 
@@ -1015,13 +1035,32 @@ class MainWindow(QMainWindow):
             )
             return
 
-        # Kept so the single-step run can find a step's Setup and teardown
-        # companions without re-parsing the file.
+        # Kept so a run can expand the ticked tests into their steps, and the
+        # progress rows can look up step durations, without re-parsing.
         self._active_document = document
 
-        for step in steps:
-            item = QListWidgetItem(step.name)
-            self._apply_test_item_permissions(item)
+        # One row per spec test, not per script step (see logic.test_groups).
+        sections = read_pdf_template().get("test_sections") or {}
+        self._test_groups = build_test_groups(
+            steps,
+            TestRunnerThread.is_led_step,
+            lambda name: str((sections.get(name) or {}).get("expected", "")),
+            POLARITY_SETTLE_S,
+        )
+        for index, group in enumerate(self._test_groups):
+            text = f"{index + 1}. {group.name}"
+            if group.detail:
+                # No indent: a wrapped detail line then keeps the same left edge.
+                text += f"\n{group.detail}"
+            item = QListWidgetItem(text)
+            item.setData(Qt.ItemDataRole.UserRole, index)
+            item.setToolTip(
+                "Run by the engine right after the LED check: load OFF, settle, "
+                "then read the output voltage. Always performed in production."
+                if group.is_polarity
+                else "Steps:\n" + "\n".join(group.step_names)
+            )
+            self._apply_test_item_permissions(item, fixed=group.is_polarity)
             item.setCheckState(Qt.CheckState.Checked)
             self.test_list.addItem(item)
 
@@ -1030,26 +1069,45 @@ class MainWindow(QMainWindow):
             self.control_panel.edit_part_number.setText(script_part_number)
 
         self.append_trace(
-            f"Loaded {len(steps)} step(s) from {logical_name}."
+            f"Loaded {len(self._test_groups)} test(s) ({len(steps)} step(s)) from {logical_name}."
         )
         self.control_panel.edit_part_number.setReadOnly(True)
 
-    def _selected_test_names(self) -> list[str]:
-        """Return only checked test names from the list widget."""
-        names: list[str] = []
+    def _group_for_item(self, item: QListWidgetItem | None) -> TestGroup | None:
+        if item is None:
+            return None
+        index = item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(index, int) and 0 <= index < len(self._test_groups):
+            return self._test_groups[index]
+        return None
+
+    def _checked_groups(self) -> list[TestGroup]:
+        """Ticked tests, excluding the Polarity row (it has no script steps)."""
+        groups: list[TestGroup] = []
         for i in range(self.test_list.count()):
             item = self.test_list.item(i)
-            if item and item.checkState() == Qt.CheckState.Checked:
-                names.append(item.text())
-        return names
+            group = self._group_for_item(item)
+            if group and not group.is_polarity and item.checkState() == Qt.CheckState.Checked:
+                groups.append(group)
+        return groups
 
-    def _rebuild_test_list_from_names(self, names: list[str]) -> None:
-        self.test_list.clear()
-        for name in names:
-            item = QListWidgetItem(name)
-            self._apply_test_item_permissions(item)
-            item.setCheckState(Qt.CheckState.Checked)
-            self.test_list.addItem(item)
+    def _always_step_names(self) -> list[str]:
+        document = self._active_document
+        return always_step_names(document.steps) if document else []
+
+    def _selected_test_names(self) -> list[str]:
+        """Script step names to run: every step of each ticked test, plus teardown.
+
+        The list shows spec tests, but the engine runs script steps, so this
+        expands the selection — a test always brings its Setup, and the
+        `Always` teardown is always included.
+        """
+        names: list[str] = []
+        for group in self._checked_groups():
+            names.extend(group.step_names)
+        if names:
+            names.extend(self._always_step_names())
+        return names
 
     def _on_start_clicked(self) -> None:
         txt = self.control_panel.btn_start.text()
@@ -1070,7 +1128,9 @@ class MainWindow(QMainWindow):
         # number.
         tests_to_run = self._selected_test_names()
         if not tests_to_run:
-            self.append_trace("No tests selected (check at least one item in the list).")
+            QMessageBox.information(
+                self, "No tests selected", "Tick at least one test in the list."
+            )
             return
 
         if not self._active_script_path.is_file():
@@ -1271,46 +1331,6 @@ class MainWindow(QMainWindow):
         thread.finished.connect(self.on_tests_finished)
         thread.finished.connect(thread.deleteLater)
 
-    def _maintenance_step_selection(self, step_name: str) -> set[str]:
-        """Steps to run for a single-step maintenance execution.
-
-        Three things are pulled in besides the chosen step:
-
-        * The nearest preceding block of `Hidden` steps — the Setup that puts
-          the load in the right mode. A measurement is meaningless without the
-          `setmode` / `setresistance` / `loadon` that configure it, and Setup
-          steps carry no `Group`, so they cannot be matched by group name.
-        * Every `Always` teardown. Not optional: the engine pulls `Always`
-          steps out of the selected set, so omitting them here would leave the
-          load energized after the run.
-        """
-        selection = {step_name}
-        document = self._active_document
-        if document is None:
-            return selection
-
-        steps = document.steps
-        selection.update(step.name for step in steps if step.always)
-
-        target = next((s for s in steps if s.name == step_name), None)
-        if target is None:
-            return selection
-
-        # Scan back for the last Hidden step before the target, then extend
-        # through the contiguous Hidden block it belongs to. Intervening
-        # visible measurement steps of the same band are skipped over.
-        preceding = steps[: steps.index(target)]
-        last_hidden = next(
-            (i for i in range(len(preceding) - 1, -1, -1) if preceding[i].hidden),
-            None,
-        )
-        if last_hidden is not None:
-            index = last_hidden
-            while index >= 0 and preceding[index].hidden:
-                selection.add(preceding[index].name)
-                index -= 1
-        return selection
-
     def _on_run_single_step(self) -> None:
         """Run one step out of sequence — Maintenance/Admin diagnostics only."""
         if not self._can(Capability.RUN_SINGLE_STEP):
@@ -1318,22 +1338,26 @@ class MainWindow(QMainWindow):
         if self.test_thread is not None and self.test_thread.isRunning():
             QMessageBox.information(self, "Busy", "A test is already running.")
             return
-        item = self.test_list.currentItem()
-        if item is None:
+        group = self._group_for_item(self.test_list.currentItem())
+        if group is None:
             QMessageBox.information(
-                self, "Run step", "Select a step in the list first."
+                self, "Run step", "Select a test in the list first."
             )
             return
         if not self._active_script_path.is_file():
             QMessageBox.warning(self, "No script", "Load a test first.")
             return
 
-        step_name = item.text()
-        selection = self._maintenance_step_selection(step_name)
+        # A whole spec test — its Setup, every measurement point, and the
+        # teardown — matching spec §1.1.4.3 "execute individual test scenarios".
+        # The Polarity Check has no script steps; the engine runs it on request.
+        step_name = group.name
+        selection = set(group.step_names) | set(self._always_step_names())
+        polarity_only = group.is_polarity
         if (
             QMessageBox.question(
                 self,
-                "Run single step",
+                "Run single test",
                 f"Run '{step_name}' outside the production sequence?\n\n"
                 f"{len(selection)} step(s) will execute (setup and teardown included).\n"
                 "No test report will be generated and the run will not be archived.",
@@ -1365,6 +1389,7 @@ class MainWindow(QMainWindow):
             logical_script_name=self._catalog_test_name or self._active_script_path.stem,
             production_flow=False,
             persist_runs=False,
+            polarity_check=polarity_only,
         )
         self._wire_test_thread_signals(self.test_thread, rows[1])
 
@@ -2098,13 +2123,14 @@ class MainWindow(QMainWindow):
     def _on_select_all_tests(self) -> None:
         for i in range(self.test_list.count()):
             item = self.test_list.item(i)
-            if item is not None:
+            if item is not None and item.flags() & Qt.ItemFlag.ItemIsUserCheckable:
                 item.setCheckState(Qt.CheckState.Checked)
 
     def _on_clear_all_tests(self) -> None:
+        # Skips the fixed Polarity row: that gate always runs in production.
         for i in range(self.test_list.count()):
             item = self.test_list.item(i)
-            if item is not None:
+            if item is not None and item.flags() & Qt.ItemFlag.ItemIsUserCheckable:
                 item.setCheckState(Qt.CheckState.Unchecked)
 
 

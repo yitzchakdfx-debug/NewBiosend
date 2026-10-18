@@ -74,6 +74,8 @@ _OPERATOR_PROMPT_POLL_S = 0.2
 # Settling time between switching the load off and reading the polarity voltage.
 # Spec §1.1.7.1 specifies 3 seconds for this test.
 _POLARITY_SETTLE_MS = 3000
+#: Public view of the settle time, for UI text describing the Polarity Check.
+POLARITY_SETTLE_S = _POLARITY_SETTLE_MS / 1000
 
 # How often a `Delay` samples current and power for the live-readings pane.
 # Voltage is already read every poll when the delay is monitored; current and
@@ -181,6 +183,7 @@ class TestRunnerThread(QThread):
         skip_hw_lifecycle: bool = False,
         production_flow: bool = True,
         persist_runs: bool = True,
+        polarity_check: bool = False,
     ) -> None:
         super().__init__()
         self._script_path = Path(script_path)
@@ -211,6 +214,9 @@ class TestRunnerThread(QThread):
         # not enter the production record.
         self._production_flow: bool = production_flow
         self._persist_runs: bool = persist_runs
+        # Maintenance-only: run the Polarity Check even though production_flow
+        # is off (production always runs it as a gate). See test list groups.
+        self._polarity_check: bool = polarity_check
         self._stop_requested = False
         # Set once the script is parsed; 0 until then so an early-abort report
         # simply omits the coverage line rather than claiming "0 / 0".
@@ -659,6 +665,11 @@ class TestRunnerThread(QThread):
                 steps_selected=self._steps_selected,
                 steps_available=self._steps_available,
             )
+
+        # Maintenance can run the Polarity Check on its own (it has no script
+        # steps — the engine performs it). Production runs it as a gate below.
+        if not self._production_flow and self._polarity_check:
+            self._check_polarity(record, unit)
 
         # Steps marked `Always` are teardown steps (e.g. a final loadoff). They
         # are pulled out of the normal sequence and run unconditionally at the
