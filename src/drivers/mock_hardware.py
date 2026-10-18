@@ -45,8 +45,12 @@ class MockHardware(BaseDriver):
         self._set_power = 0.0
 
     def activate_slot(self, slot_index: int, *, load_serial_number: str = "") -> None:
-        """No-op slot selection for the mock driver."""
+        """Slot selection for the mock driver (remembered for `selected_slot`)."""
+        self._selected_slot = slot_index
         time.sleep(0.05)
+
+    def selected_slot(self) -> int | None:
+        return getattr(self, "_selected_slot", None)
 
     def load_off_verified(self, attempts: int = 3) -> str:
         """Mirror of `ProdigitVisaDriver.load_off_verified`: off, then read back."""

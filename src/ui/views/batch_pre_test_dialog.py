@@ -77,30 +77,46 @@ class _ScanThread(QThread):
 
         active: list[int] = []
         readings: list[tuple[int, float | None]] = []
+        # Slots whose selection the mainframe confirmed with CHAN?. Their
+        # reading is trusted even if it equals another slot's: one supply wired
+        # to two loads reads the same voltage on both, and is two real channels.
+        confirmed: set[int] = set()
         for idx, load_serial in enumerate(LOAD_SERIALS):
             slot = idx + 1
             try:
                 if hasattr(driver, "activate_slot"):
                     driver.activate_slot(slot, load_serial_number=load_serial)  # type: ignore[attr-defined]
+                reply = driver.selected_slot() if hasattr(driver, "selected_slot") else None
+                if reply is not None and reply != slot:
+                    # The selection did not take: any reading now comes from
+                    # another channel. Skip rather than mis-attribute it.
+                    readings.append((slot, None))
+                    continue
                 v = driver.execute_command("readinput", [str(slot)])
             except Exception:
                 readings.append((slot, None))
                 continue
+            if reply == slot:
+                confirmed.add(slot)
             readings.append((slot, v))
             if min_v <= v <= max_v:
                 active.append(slot)
 
-        # Guard against a stale slot echo. `activate_slot` fires `CHAN <n>` and
-        # cannot verify it took effect, so a mainframe that ignores a selection
-        # for an absent module keeps answering with the previously selected
-        # channel — one UUT then appears on two channels. Identical non-zero
-        # readings across slots are that signature, not two matched units, so
-        # keep only the first and let the operator add others deliberately.
+        # Fallback guard against a stale slot echo, used only for slots whose
+        # selection could not be confirmed (no CHAN? support). A mainframe that
+        # ignores a selection keeps answering with the previous channel, so
+        # identical readings were taken as an echo. With CHAN? (measured on the
+        # station: it confirms every selection, immediately) a confirmed slot
+        # is trusted — otherwise one supply on two loads showed as one channel.
         deduped: list[int] = []
         seen: list[float] = []
         for slot in active:
             v = next((val for s, val in readings if s == slot and val is not None), None)
             if v is None:
+                continue
+            if slot in confirmed:
+                seen.append(v)
+                deduped.append(slot)
                 continue
             if any(abs(v - prev) < _SLOT_ECHO_TOLERANCE_V for prev in seen):
                 continue  # same voltage as an earlier slot → almost certainly an echo

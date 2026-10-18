@@ -330,6 +330,15 @@ Two independent problems, both fixed in `_ScanThread.run`:
   are treated as that echo and collapsed to the first; genuinely different
   supplies differ by more, an echo is bit-identical.
 
+**Selections are confirmed with `CHAN?`** (2026-10-18). Measured on the
+station: after `CHAN n` the mainframe answers `CHAN?` with `n` immediately, every
+time. The scan now asks `driver.selected_slot()` after each selection; a
+confirmed slot is trusted even when its voltage equals another slot's, a slot
+whose selection did not take is skipped, and only unconfirmed slots (instruments
+without `CHAN?`, `PRODIGIT_QUERY_SLOT` empty) fall back to the identical-voltage
+echo rule. The rule had hidden real channels: one supply wired to two loads read
+24.373 V and 24.374 V, and the second channel was dropped (3 of 4 detected).
+
 Detection stays advisory: the operator can still tick an undetected channel
 (spec §1.1.5.3 asks for exclusion, and this remains a deliberate deviation).
 

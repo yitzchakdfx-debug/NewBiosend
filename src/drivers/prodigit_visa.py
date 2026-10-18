@@ -25,6 +25,7 @@ from config import (
     PRODIGIT_QUERY_POWER,
     PRODIGIT_QUERY_POWER_SET,
     PRODIGIT_QUERY_RESISTANCE_SET,
+    PRODIGIT_QUERY_SLOT,
     PRODIGIT_QUERY_VOLTAGE,
     PRODIGIT_QUERY_VOLTAGE_SET,
     PRODIGIT_SELECT_SLOT,
@@ -317,6 +318,19 @@ class ProdigitVisaDriver(BaseDriver):
         raise HardwareError(
             f"load still reports {reply!r} after {attempts} LOAD OFF attempts"
         )
+
+    def selected_slot(self) -> int | None:
+        """The channel the mainframe reports as selected (`CHAN?`), or None.
+
+        None means "cannot tell": the query is disabled, unsupported, or the
+        reply is not a number. Callers then fall back to their old heuristics.
+        """
+        if not PRODIGIT_QUERY_SLOT.strip():
+            return None
+        try:
+            return int(float(self._query_text(PRODIGIT_QUERY_SLOT)))
+        except Exception:
+            return None
 
     def activate_slot(self, slot_index: int, *, load_serial_number: str = "") -> None:
         self._active_slot = max(1, int(slot_index))

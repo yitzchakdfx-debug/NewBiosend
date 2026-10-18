@@ -105,3 +105,6 @@ PRODIGIT_SET_POWER: str = get_str("PRODIGIT_SET_POWER", "CP:HIGH {value}")
 PRODIGIT_QUERY_POWER_SET: str = get_str("PRODIGIT_QUERY_POWER_SET", "CP:HIGH?")
 PRODIGIT_SET_RELAY: str = get_str("PRODIGIT_SET_RELAY", "")
 PRODIGIT_SELECT_SLOT: str = get_str("PRODIGIT_SELECT_SLOT", "")
+# Reads back the selected channel, so the scan can confirm a selection instead
+# of guessing from identical voltages. Empty disables the check.
+PRODIGIT_QUERY_SLOT: str = get_str("PRODIGIT_QUERY_SLOT", "CHAN?")
