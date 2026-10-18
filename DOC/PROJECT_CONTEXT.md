@@ -675,6 +675,14 @@ modal. `on_tests_finished` shows "Run did not start … No report was generated"
 instead of a FAIL banner (an Operator cannot see the Messages tab holding the
 reason), and audits "Test run ended before any unit was tested".
 
+**Stop works after a unit has already finished** (2026-10-18). Parallel
+threads used to be `deleteLater`'d on their own `finished`; when one unit failed
+early, Stop walked `_parallel_threads`, called `isRunning()` on the deleted
+thread, raised RuntimeError and never reached the units still running — Stop did
+nothing (seen on the station). Threads are now deleted together at the end of
+`_on_parallel_thread_finished`, and `MainWindow._is_running()` (shiboken6
+validity check) guards every Stop / shutdown / close check.
+
 `should_generate_report` is a different, older flag: it is set on the up-front
 polarity failure path but `_finalize_run_reports` never reads it, so that path
 still archives a report despite logging "Skipping report". Left as is pending a

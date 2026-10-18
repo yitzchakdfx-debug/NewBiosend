@@ -39,6 +39,8 @@ from PySide6.QtWidgets import (
 
 import threading
 
+import shiboken6
+
 from config import LOAD_SERIALS, SHOW_NIGHT_MODE, SHOW_SEARCH_BAR
 from drivers.base_driver import BaseDriver, HardwareError
 from drivers.factory import create_driver, resolve_station_config
@@ -1112,13 +1114,13 @@ class MainWindow(QMainWindow):
     def _on_start_clicked(self) -> None:
         txt = self.control_panel.btn_start.text()
         if txt == "Pause":
-            if self.test_thread and self.test_thread.isRunning():
+            if self._is_running(self.test_thread):
                 self.test_thread.pause()
             self.control_panel.btn_start.setText("Resume")
             return
 
         if txt == "Resume":
-            if self.test_thread and self.test_thread.isRunning():
+            if self._is_running(self.test_thread):
                 self.test_thread.resume_pause()
             self.control_panel.btn_start.setText("Pause")
             return
@@ -1335,7 +1337,7 @@ class MainWindow(QMainWindow):
         """Run one step out of sequence — Maintenance/Admin diagnostics only."""
         if not self._can(Capability.RUN_SINGLE_STEP):
             return
-        if self.test_thread is not None and self.test_thread.isRunning():
+        if self._is_running(self.test_thread):
             QMessageBox.information(self, "Busy", "A test is already running.")
             return
         group = self._group_for_item(self.test_list.currentItem())
@@ -1641,22 +1643,38 @@ class MainWindow(QMainWindow):
         self._trace_history.clear()
         self.trace_log.clear()
 
+    @staticmethod
+    def _is_running(thread: QThread | None) -> bool:
+        """`isRunning()` that tolerates a thread whose C++ object is gone.
+
+        Calling a method on a deleted QThread raises RuntimeError. In a parallel
+        run one unit can finish long before the others; its thread used to be
+        deleted at once, so Stop crashed on it and never reached the units still
+        running — pressing Stop did nothing.
+        """
+        if thread is None:
+            return False
+        try:
+            return shiboken6.isValid(thread) and thread.isRunning()
+        except RuntimeError:
+            return False
+
     def stop_tests(self) -> None:
         if self._parallel_threads:
             for th in self._parallel_threads:
-                if th.isRunning():
+                if self._is_running(th):
                     th.stop()
             self.append_trace("Stopping all parallel sequences...")
-        elif self.test_thread and self.test_thread.isRunning():
+        elif self._is_running(self.test_thread):
             self.test_thread.stop()
             self.append_trace("Stopping sequence...")
 
     def _shutdown_threads(self) -> None:
         for th in list(self._parallel_threads):
-            if th.isRunning():
+            if self._is_running(th):
                 th.stop()
                 th.wait(5000)
-        if self.test_thread is not None and self.test_thread.isRunning():
+        if self._is_running(self.test_thread):
             self.test_thread.stop()
             if not self.test_thread.wait(5000):
                 self.append_trace("Warning: test thread did not stop within 5s.")
@@ -1751,8 +1769,8 @@ class MainWindow(QMainWindow):
             self.close()
 
     def closeEvent(self, event) -> None:
-        if (self.test_thread is not None and self.test_thread.isRunning()) or any(
-            th.isRunning() for th in self._parallel_threads
+        if self._is_running(self.test_thread) or any(
+            self._is_running(th) for th in self._parallel_threads
         ):
             confirm = QMessageBox.question(
                 self,
@@ -2003,7 +2021,9 @@ class MainWindow(QMainWindow):
             th.prompt_yesno_request.connect(self._on_prompt_yesno_request)
             th.script_log.connect(self._on_script_log)
             th.finished.connect(self._on_parallel_thread_finished)
-            th.finished.connect(th.deleteLater)
+            # Not deleted on its own `finished`: Stop, close and the final
+            # report pass all walk this list, and a unit can finish minutes
+            # before the others. Deleted together in _on_parallel_thread_finished.
             self._parallel_threads.append(th)
 
         try:
@@ -2075,6 +2095,8 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+        for th in self._parallel_threads:
+            th.deleteLater()  # all finished and finalised now
         self._parallel_threads = []
         self._parallel_section_cursors = {}
         self._parallel_section_order = []
