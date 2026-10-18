@@ -8,9 +8,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QFont, QGuiApplication
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QDialog,
     QHBoxLayout,
     QHeaderView,
@@ -90,7 +91,11 @@ def _locked_dash() -> QTableWidgetItem:
 class LimitsEditorDialog(QDialog):
     """Table editor for step parameters in the loaded test.
 
-    One row per step. Editable columns: Value, Low, High, Delay (ms), Unit,
+    One row per step, grouped under the report test it belongs to (the four
+    spec tests for biosense_test). Steps with nothing to edit -- the Current /
+    Power / Resistance reads, which only document a value, and the cleanup --
+    are hidden until "Show all steps" is ticked; they are still written back
+    unchanged. Editable columns: Value, Low, High, Delay (ms), Unit,
     Channel (readchannel arg), and Critical flag. Together these cover the three
     parameters spec Rev.1.1 requires an Admin to be able to adjust — test
     duration (Delay), voltage limits/tolerance (Low/High), and load resistance
@@ -131,6 +136,9 @@ class LimitsEditorDialog(QDialog):
         # Work on deep copies so edits never touch the live document.
         self._all_steps: list[TestStep] = copy.deepcopy(document.steps)
         self._rows: list[_RowDesc] = self._build_rows()
+        # Table row of each `_rows` entry; group heading rows sit in between.
+        self._row_of: list[int] = []
+        self._heading_rows: list[tuple[int, list[int]]] = []  # (table row, member indices)
 
         self._apply_mode = False
         self._temp_path: Path | None = None
@@ -162,6 +170,12 @@ class LimitsEditorDialog(QDialog):
             self._table.setEditTriggers(QTableWidget.EditTrigger.DoubleClicked)
             self._populate_table()
             root.addWidget(self._table, stretch=1)
+            self._chk_show_all = QCheckBox(
+                "Show all steps (including readings with no limits to edit)"
+            )
+            self._chk_show_all.toggled.connect(self._apply_row_visibility)
+            root.addWidget(self._chk_show_all)
+            self._apply_row_visibility(False)
 
         btn_row = QHBoxLayout()
         self._btn_zoom = QPushButton("⛶ Maximize")
@@ -200,7 +214,9 @@ class LimitsEditorDialog(QDialog):
         user can still maximize via the title bar or the Maximize button.
         """
         desired_w = 900
-        desired_h = 160 + len(self._all_steps) * 30
+        shown = sum(1 for i in range(len(self._rows)) if self._is_relevant(i))
+        groups = len({self._group_of(i) for i in range(len(self._rows))})
+        desired_h = 200 + (shown + groups) * 34
 
         screen = self.screen() or QGuiApplication.primaryScreen()
         if screen is not None:
@@ -294,12 +310,94 @@ class LimitsEditorDialog(QDialog):
         return rows
 
     # ------------------------------------------------------------------
+    # Grouping / visibility
+    # ------------------------------------------------------------------
+
+    def _is_relevant(self, i: int) -> bool:
+        """Whether row `i` has anything an admin would edit (shown by default)."""
+        rd = self._rows[i]
+        step = self._all_steps[rd.step_idx]
+        return (
+            rd.value_cmd_idx is not None
+            or rd.delay_cmd_idx is not None
+            or rd.channel_cmd_idx is not None
+            or step.min_val is not None
+            or step.max_val is not None
+        )
+
+    def _group_of(self, i: int) -> str:
+        """The report test a step belongs to.
+
+        A step without `Report` (the load setup before a test) belongs to the
+        next reported test, so "Low Load 100W Setup" sits under Low Load.
+        """
+        for step in self._all_steps[self._rows[i].step_idx:]:
+            if (step.report_test or "").strip():
+                return step.report_test.strip()
+        return "Other steps"
+
+    def _display_name(self, step: TestStep) -> str:
+        """Short name for a measurement step: "t2 (15 min) — Voltage"."""
+        quantity = (step.report_quantity or "").strip()
+        if not quantity or not (step.report_test or "").strip():
+            return step.name
+        idx = step.report_index or 1
+        time_text = ""
+        for other in self._all_steps:
+            if (
+                other.report_test == step.report_test
+                and (other.report_index or 1) == idx
+                and (other.report_time or "").strip()
+            ):
+                time_text = f" ({other.report_time} {other.report_time_uom or 'min'})"
+                break
+        return f"t{idx}{time_text} — {quantity}"
+
+    def _apply_row_visibility(self, show_all: bool) -> None:
+        for i, row in enumerate(self._row_of):
+            self._table.setRowHidden(row, not (show_all or self._is_relevant(i)))
+        for row, members in self._heading_rows:
+            self._table.setRowHidden(
+                row, not any(show_all or self._is_relevant(i) for i in members)
+            )
+
+    # ------------------------------------------------------------------
     # Table population
     # ------------------------------------------------------------------
 
     def _populate_table(self) -> None:
         self._table.clearContents()
-        self._table.setRowCount(len(self._rows))
+        self._table.clearSpans()
+        groups: list[tuple[str, list[int]]] = []
+        for i in range(len(self._rows)):
+            title = self._group_of(i)
+            if not groups or groups[-1][0] != title:
+                groups.append((title, []))
+            groups[-1][1].append(i)
+
+        self._row_of = [0] * len(self._rows)
+        self._heading_rows = []
+        labels: list[str] = []
+        table_row = 0
+        for _title, members in groups:
+            self._heading_rows.append((table_row, members))
+            labels.append("")
+            table_row += 1
+            for i in members:
+                self._row_of[i] = table_row
+                labels.append(str(i + 1))  # step number, as in the script
+                table_row += 1
+        self._table.setRowCount(table_row)
+        self._table.setVerticalHeaderLabels(labels)
+
+        bold = QFont()
+        bold.setBold(True)
+        for row, members in self._heading_rows:
+            heading = QTableWidgetItem(self._group_of(members[0]))
+            heading.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            heading.setFont(bold)
+            self._table.setItem(row, 0, heading)
+            self._table.setSpan(row, 0, 1, len(_HEADERS))
 
         self._table.setHorizontalHeaderLabels(_HEADERS)
         header = self._table.horizontalHeader()
@@ -308,11 +406,13 @@ class LimitsEditorDialog(QDialog):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
             self._table.setColumnWidth(column, width)
 
-        for row, rd in enumerate(self._rows):
+        for i, rd in enumerate(self._rows):
+            row = self._row_of[i]
             step = self._all_steps[rd.step_idx]
 
-            # Test — always read-only
-            name_item = QTableWidgetItem(step.name)
+            # Test — always read-only; the full script name is in the tooltip
+            name_item = QTableWidgetItem(self._display_name(step))
+            name_item.setToolTip(step.name)
             name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self._table.setItem(row, COL_TEST, name_item)
 
@@ -441,7 +541,8 @@ class LimitsEditorDialog(QDialog):
         """Read table cells back into self._all_steps. Returns False on error."""
         self._monitor_dropped: list[str] = []
         delays_changed = False
-        for row, rd in enumerate(self._rows):
+        for i, rd in enumerate(self._rows):
+            row = self._row_of[i]
             step = self._all_steps[rd.step_idx]
 
             # --- Value ---
@@ -450,13 +551,13 @@ class LimitsEditorDialog(QDialog):
                 if rd.value_kind == "numeric":
                     if not _is_float(val_text):
                         self._error(
-                            f"Row {row + 1} ({step.name!r}): Value must be a number."
+                            f"Step {i + 1} ({step.name!r}): Value must be a number."
                         )
                         return False
                 elif rd.value_kind == "onoff":
                     if val_text.lower() not in _ONOFF_VALUES:
                         self._error(
-                            f"Row {row + 1} ({step.name!r}): Value must be 'on' or 'off'."
+                            f"Step {i + 1} ({step.name!r}): Value must be 'on' or 'off'."
                         )
                         return False
                     val_text = val_text.lower()
@@ -474,14 +575,14 @@ class LimitsEditorDialog(QDialog):
                     low_val = float(low_text) if low_text else None
                 except ValueError:
                     self._error(
-                        f"Row {row + 1} ({step.name!r}): Low limit must be a number."
+                        f"Step {i + 1} ({step.name!r}): Low limit must be a number."
                     )
                     return False
                 try:
                     high_val = float(high_text) if high_text else None
                 except ValueError:
                     self._error(
-                        f"Row {row + 1} ({step.name!r}): High limit must be a number."
+                        f"Step {i + 1} ({step.name!r}): High limit must be a number."
                     )
                     return False
                 if (
@@ -490,7 +591,7 @@ class LimitsEditorDialog(QDialog):
                     and low_val > high_val
                 ):
                     self._error(
-                        f"Row {row + 1} ({step.name!r}): "
+                        f"Step {i + 1} ({step.name!r}): "
                         f"Low ({low_val:g}) must not exceed High ({high_val:g})."
                     )
                     return False
@@ -518,13 +619,13 @@ class LimitsEditorDialog(QDialog):
                     delay_ms = int(float(delay_text))
                 except ValueError:
                     self._error(
-                        f"Row {row + 1} ({step.name!r}): "
+                        f"Step {i + 1} ({step.name!r}): "
                         "Delay must be a whole number of milliseconds."
                     )
                     return False
                 if delay_ms < 0:
                     self._error(
-                        f"Row {row + 1} ({step.name!r}): Delay cannot be negative."
+                        f"Step {i + 1} ({step.name!r}): Delay cannot be negative."
                     )
                     return False
                 args = step.commands[rd.delay_cmd_idx]["args"]
@@ -546,7 +647,7 @@ class LimitsEditorDialog(QDialog):
                     int(ch_text)
                 except ValueError:
                     self._error(
-                        f"Row {row + 1} ({step.name!r}): Channel must be an integer."
+                        f"Step {i + 1} ({step.name!r}): Channel must be an integer."
                     )
                     return False
                 args = step.commands[rd.channel_cmd_idx]["args"]
