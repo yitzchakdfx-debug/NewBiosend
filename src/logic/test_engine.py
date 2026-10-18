@@ -555,7 +555,7 @@ class TestRunnerThread(QThread):
                 "passed": False,
                 "is_measurement": True,
             }
-            self._emit_result(unit, led_step.name, payload)
+            self._emit_result(unit, led_step.name, {**payload, **self._report_fields(led_step)})
             record.results.append(
                 {
                     "test_name": led_step.name,
@@ -657,7 +657,10 @@ class TestRunnerThread(QThread):
                 "passed": False,
                 "is_measurement": False,
             }
-            self._emit_result(unit, step.name, {**na_payload, "skipped": True})
+            self._emit_result(
+                unit, step.name,
+                {**na_payload, "skipped": True, **self._report_fields(step)},
+            )
             record.results.append(
                 {
                     "test_name": step.name,
@@ -839,7 +842,12 @@ class TestRunnerThread(QThread):
                 if not passed and self._fail_note:
                     payload["note"] = self._fail_note
                 if not getattr(step, "hidden", False):
-                    self._emit_result(unit, step.name, payload)
+                    # Report fields let the results table merge one time
+                    # point's V/I/P/R steps into a single row.
+                    self._emit_result(
+                        unit, step.name,
+                        {**payload, **self._report_fields(step)},
+                    )
                     record.results.append(
                         {
                             "test_name": step.name,

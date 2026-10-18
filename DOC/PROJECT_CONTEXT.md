@@ -569,6 +569,19 @@ performed after a failure carry `skipped` and show grey **N/A** instead of a red
 FAIL — matching the PDF/XML — and no longer count in the FAIL counter. Failing
 rows grow to wrap the text.
 
+**One row per measurement point** (2026-10-18). The table used to show one row
+per quantity — V, I, P, R at every point, 19 rows per unit, each with a green
+PASS although only voltage has limits. Steps carrying a `Quantity` now merge by
+(unit, `report_test`, `Measurement` index) into one row, the way Appendix A lays
+a point out: `Low Load Stability Test  t1 (1 min) | 25.62 V · 0.436 A · 11.18 W ·
+57.6 Ω | PASS`. The verdict and Min/Max come from the limited quantity (voltage);
+a failing component gives the row its failure text; an all-skipped point is
+N/A. The engine includes `_report_fields(step)` in every emitted result for
+this; reports and CSV are unchanged. Rows are located by their cell item, not
+row number, because parallel sections insert rows above them, and row heights
+re-flow when the table resizes. Steps without a `Quantity` (input check, LED,
+polarity, older scripts) keep one row each.
+
 **Impossible readings are instrument faults, not UUT values.** On the station
 the 3300G answered a voltage query with `9999` 47 s into the 100 W wait; it was
 recorded as a 9999 V failure of the UUT. `_hw_execute` now validates V/I/P reads

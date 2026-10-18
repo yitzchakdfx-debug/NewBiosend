@@ -7,7 +7,7 @@ import math
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QObject, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QBrush, QColor, QDesktopServices, QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -79,6 +79,21 @@ from version import __version__
 # load a script explicitly ran the wrong test.
 _DEFAULT_SCRIPT_NAME = "biosense_test.tst"
 _NA = "-"
+
+
+class _ResizeRelay(QObject):
+    """Calls `callback` whenever the watched widget is resized."""
+
+    def __init__(self, callback, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._callback = callback
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
+        if event.type() == QEvent.Type.Resize:
+            # Deferred: the header re-lays out its stretching section after this
+            # event, so measuring now would still see the old column width.
+            QTimer.singleShot(0, self._callback)
+        return False
 
 
 def _format_measurement(value: float) -> str:
@@ -703,9 +718,19 @@ class MainWindow(QMainWindow):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         self.results_table.setColumnWidth(0, 250)
-        self.results_table.setColumnWidth(1, 100)
-        self.results_table.setColumnWidth(2, 100)
-        self.results_table.setColumnWidth(3, 100)
+        # Value is wide enough for a merged measurement point
+        # ("25.62 V · 0.436 A · 11.18 W · 57.6 Ω"); Min/Max hold one number.
+        self.results_table.setColumnWidth(1, 240)
+        self.results_table.setColumnWidth(2, 70)
+        self.results_table.setColumnWidth(3, 70)
+        # Re-flow row heights when the table changes width: a wrapped failure
+        # reason otherwise keeps the height it got while its column was narrow.
+        # The stretching Result column does not emit sectionResized on a window
+        # resize, so the viewport's own resize event is watched.
+        self._results_resize_relay = _ResizeRelay(
+            self.results_table.resizeRowsToContents, self.results_table
+        )
+        self.results_table.viewport().installEventFilter(self._results_resize_relay)
         self.results_table.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
@@ -772,6 +797,9 @@ class MainWindow(QMainWindow):
         self._live_columns: dict[int, int] = {}  # slot_index -> table column
         self._unit_rows: dict[int, UnitProgressRow] = {}  # slot_index -> progress row
         self._test_groups: list[TestGroup] = []  # one per test-list row
+        # Results-table rows that merge one measurement point's V/I/P/R steps,
+        # keyed by (unit, report test, index, time point). See update_results_table.
+        self._point_rows: dict[tuple, dict] = {}
         # Batch counters. Initialised here, not only in `_start_test_run`: a
         # Maintenance "Run Step" emits unit_finished without ever starting a
         # production run, and the counter slot raised AttributeError.
@@ -1369,6 +1397,7 @@ class MainWindow(QMainWindow):
             return
 
         self.results_table.setRowCount(0)
+        self._point_rows = {}
         self.control_panel.progress_total.setValue(0)
         rows = self.control_panel.show_unit_progress([(1, "MAINT")], self._step_delay_s)
         self.control_panel.btn_stop.setEnabled(True)
@@ -1411,6 +1440,7 @@ class MainWindow(QMainWindow):
         tests_to_run = self._selected_test_names()
 
         self.results_table.setRowCount(0)
+        self._point_rows = {}
         self.control_panel.progress_total.setValue(0)
         self.control_panel.edit_current_unit.clear()
         self.control_panel.label_pass.setText("PASS: 0")
@@ -1900,11 +1930,41 @@ class MainWindow(QMainWindow):
             self.control_panel.label_fail.setText(f"FAIL: {n}")
 
     def update_results_table(self, test_name: str, result: TestResultPayload) -> None:
+        """Add a step result; the steps of one measurement point share a row.
+
+        Steps carrying a `TimePoint` (the V/I/P/R reads of "Low Load t1",
+        "Burn-In t2", ...) merge into one row per point, the way spec Appendix A
+        lays out each point ("t1: Voltage .. Current .. Power .. Resistance").
+        Everything else — input check, LED, polarity, older scripts — keeps one
+        row per step.
+        """
+        key = self._point_key(result)
+        if key is not None and key in self._point_rows:
+            entry = self._point_rows[key]
+            entry["members"].append((test_name, result))
+            self._render_point_row(entry)
+        else:
+            row = self._insert_result_row(result)
+            if key is None:
+                self._fill_result_row(row, test_name, result)
+            else:
+                items = [QTableWidgetItem("") for _ in range(5)]
+                for col, item in enumerate(items):
+                    self.results_table.setItem(row, col, item)
+                entry = {"items": items, "members": [(test_name, result)], "result": result}
+                self._point_rows[key] = entry
+                self._render_point_row(entry)
+        # Count each point once — by its limited quantity (voltage); the
+        # documentation-only reads (current, power, resistance) do not count.
+        if key is None or self._has_limits(result):
+            self._update_pass_fail_counters(result)
+
+    def _insert_result_row(self, result: TestResultPayload) -> int:
+        """Insert an empty row for `result`, inside its unit's section in a parallel run."""
         pos = result.get("position_label", "")
         if pos and pos in self._parallel_section_cursors:
             insert_at = self._parallel_section_cursors[pos]
             self.results_table.insertRow(insert_at)
-            self._fill_result_row(insert_at, test_name, result)
             self._parallel_section_cursors[pos] += 1
             past = False
             for p in self._parallel_section_order:
@@ -1913,13 +1973,99 @@ class MainWindow(QMainWindow):
                     continue
                 if past:
                     self._parallel_section_cursors[p] += 1
-            self._update_pass_fail_counters(result)
-            return
-
+            return insert_at
         row = self.results_table.rowCount()
         self.results_table.insertRow(row)
-        self._fill_result_row(row, test_name, result)
-        self._update_pass_fail_counters(result)
+        return row
+
+    @staticmethod
+    def _point_key(result: TestResultPayload) -> tuple | None:
+        """Which measurement point a step reads, or None for a standalone step.
+
+        A point is a report test plus its measurement index: the script tags
+        only the Voltage step with a TimePoint, while Current/Power/Resistance
+        carry the same `Quantity` + `Measurement` index. Steps without a
+        quantity (LED, engine gates, older scripts) stay one row each.
+        """
+        if not str(result.get("report_quantity", "") or "") or not result.get("report_test"):
+            return None
+        return (
+            result.get("position_label", ""),
+            result.get("serial_number", ""),
+            result.get("report_test", ""),
+            result.get("report_index", 0),
+        )
+
+    @staticmethod
+    def _has_limits(result: TestResultPayload) -> bool:
+        lo, hi = result.get("min"), result.get("max")
+        return (
+            isinstance(lo, (int, float)) and isinstance(hi, (int, float))
+            and math.isfinite(lo) and math.isfinite(hi)
+        )
+
+    _QUANTITY_ORDER = {"voltage": 0, "current": 1, "power": 2, "resistance": 3}
+
+    def _render_point_row(self, entry: dict) -> None:
+        """(Re)draw a merged measurement-point row from all of its steps so far."""
+        first = entry["result"]
+        row = self.results_table.row(entry["items"][0])
+        if row < 0:
+            return
+        members = sorted(
+            entry["members"],
+            key=lambda m: self._QUANTITY_ORDER.get(str(m[1].get("report_quantity", "")).lower(), 9),
+        )
+
+        index = int(first.get("report_index", 0) or 0) or 1
+        timed = next((m[1] for m in members if m[1].get("report_time")), None)
+        time_txt = (
+            f"{timed.get('report_time', '')} {timed.get('report_time_uom', '')}".strip()
+            if timed else ""
+        )
+        name = f"{first.get('report_test', '')}  t{index}" + (f" ({time_txt})" if time_txt else "")
+
+        values: list[str] = []
+        tips: list[str] = []
+        limited: TestResultPayload | None = None
+        failed: TestResultPayload | None = None
+        all_skipped = True
+        for step_name, res in members:
+            skipped = bool(res.get("skipped"))
+            all_skipped = all_skipped and skipped
+            unit = "Ω" if str(res.get("unit", "")).lower() == "ohm" else str(res.get("unit", ""))
+            value = res.get("value")
+            shown = ""
+            if not skipped and res.get("is_measurement", True) and isinstance(value, (int, float)) and math.isfinite(value):
+                shown = f"{_format_measurement(value)} {unit}".rstrip()
+                values.append(shown)
+            if not skipped and self._has_limits(res) and limited is None:
+                limited = res
+            if not skipped and not res.get("passed") and failed is None:
+                failed = res
+            verdict = "N/A" if skipped else ("PASS" if res.get("passed") else "FAIL")
+            tips.append(f"{step_name}: {shown or '-'}  {verdict}")
+
+        if failed is not None:
+            status = self._failure_text(failed)
+        elif all_skipped:
+            status = "N/A"
+        else:
+            status = "PASS"
+
+        cells = [
+            name,
+            " · ".join(values) if values else _NA,
+            _format_measurement(limited["min"]) if limited else _NA,
+            _format_measurement(limited["max"]) if limited else _NA,
+            status,
+        ]
+        tooltip = "\n".join(tips)
+        for col, (item, text) in enumerate(zip(entry["items"], cells)):
+            item.setText(text)
+            item.setToolTip(tooltip if col < 4 else f"{status}\n\n{tooltip}")
+        entry["items"][4].setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.results_table.resizeRowToContents(row)
 
     def append_trace(self, msg: str) -> None:
         stamped = f"{datetime.now().strftime('[%H:%M:%S]')} {msg}"
