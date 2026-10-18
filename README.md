@@ -83,13 +83,18 @@ To ensure operational safety on the production floor, the system uses strict Rol
 
 On first run the database is auto-initialized with a default administrator account:
 
-- **Username:** `lior`
-- **Password:** `XXXXXXX`
+- **Username:** `admin`
+- **Password:** `admin`
 
 These two values come from `DEFAULT_ADMIN_USERNAME` / `DEFAULT_ADMIN_PASSWORD` in
-`.env`, and they are **seed-only**: they create the first admin row and are then
-ignored forever (`_seed_admin` uses `INSERT OR IGNORE`). Editing them later has no
-effect — change credentials in the app, under **Admin > User Management**.
+`.env`. They only **create** that admin: `_seed_admin` runs at every start-up with
+`INSERT OR IGNORE`, so if no user by that name exists it is added, and an existing
+one is never changed. Two consequences:
+
+- Changing the **password** in `.env` later has no effect on an existing user —
+  change it in the app, under **Admin > User Management**.
+- Changing the **username** in `.env` adds a *second* admin at the next start;
+  the old one stays until it is deleted in User Management.
 
 ---
 
