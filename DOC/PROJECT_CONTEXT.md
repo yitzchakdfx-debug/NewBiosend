@@ -355,6 +355,15 @@ alone has a hole:
    short-timeout connection purely to send `loadoff`, covering a session that
    closed without a run or after its thread had gone.
 
+**Every load-off selects its channel first** (2026-10-15). The 3300G applies
+`LOAD OFF` to the channel last selected with `CHAN n`. `_force_load_off` used to
+send it without selecting, so in a parallel run it hit whichever unit had just
+polled its voltage: reproduced on the simulator, a unit failing early switched
+off *another* unit's load mid burn-in — which then passed a 300 W test it never
+ran — while its own load stayed on. It now calls `activate_slot` and `loadoff`
+inside the same `hw_lock`, like `_hw_execute`. `_release_load_on_exit` likewise
+selects and switches off every channel in `LOAD_SERIALS` instead of one.
+
 **What software cannot do:** switch off a load it cannot reach. Pulling the
 load's LAN cable aborts the test (see monitoring below) but leaves it drawing
 current, and `loadoff` then fails. `_force_load_off` therefore emits

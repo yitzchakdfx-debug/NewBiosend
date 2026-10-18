@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
 
 import threading
 
-from config import SHOW_NIGHT_MODE, SHOW_SEARCH_BAR
+from config import LOAD_SERIALS, SHOW_NIGHT_MODE, SHOW_SEARCH_BAR
 from drivers.base_driver import BaseDriver, HardwareError
 from drivers.factory import create_driver, resolve_station_config
 from logic.database_manager import DatabaseManager
@@ -1663,8 +1663,14 @@ class MainWindow(QMainWindow):
             driver = create_driver(timeout_ms=1500, probe_identity=False)
             try:
                 driver.connect()
-                driver.execute_command("loadoff", [])
-                self.append_trace("Load off confirmed on exit.")
+                # LOAD OFF acts on the selected channel only, so a bare one
+                # switched off a single channel of up to four. Select each in
+                # turn.
+                for slot, load_serial in enumerate(LOAD_SERIALS or [""], start=1):
+                    if hasattr(driver, "activate_slot"):
+                        driver.activate_slot(slot, load_serial_number=load_serial)
+                    driver.execute_command("loadoff", [])
+                self.append_trace("Load off confirmed on exit (all channels).")
             finally:
                 driver.disconnect()
         except Exception as exc:

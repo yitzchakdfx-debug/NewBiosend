@@ -1260,12 +1260,26 @@ class TestRunnerThread(QThread):
         the honest outcome is a loud warning, not a silent log line.
         """
         label = f" [{unit.serial_number}]" if unit is not None else ""
+
+        def _send() -> None:
+            # The 3300G applies LOAD OFF to whichever channel was selected last.
+            # Select this unit's channel first, inside the same lock: in a
+            # parallel run the last selection usually belongs to another unit
+            # that just polled its voltage, and switching *its* load off mid
+            # burn-in let it pass a 300 W test it never ran — while this unit's
+            # load stayed on.
+            if unit is not None and hasattr(self._hw, "activate_slot"):
+                self._hw.activate_slot(
+                    unit.slot_index, load_serial_number=unit.load_serial_number
+                )
+            self._hw.execute_command("loadoff", [])
+
         try:
             if self._hw_lock is not None:
                 with self._hw_lock:
-                    self._hw.execute_command("loadoff", [])
+                    _send()
             else:
-                self._hw.execute_command("loadoff", [])
+                _send()
             self._emit_log("info", f"Load off confirmed{label}.")
             return True
         except Exception as exc:
