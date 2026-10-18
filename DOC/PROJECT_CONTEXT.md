@@ -560,6 +560,17 @@ performed after a failure carry `skipped` and show grey **N/A** instead of a red
 FAIL — matching the PDF/XML — and no longer count in the FAIL counter. Failing
 rows grow to wrap the text.
 
+**Impossible readings are instrument faults, not UUT values.** On the station
+the 3300G answered a voltage query with `9999` 47 s into the 100 W wait; it was
+recorded as a 9999 V failure of the UUT. `_hw_execute` now validates V/I/P reads
+(`_VALIDATED_READS`): a value at or above `_INVALID_READING_SENTINEL` (9990), or
+a voltage above `_MAX_PLAUSIBLE_VOLTS` (100 V), is re-read up to twice; if it
+persists, `InvalidReadingError` fails the step with no value and the note
+"invalid reading from the instrument (9999) — check the load's front panel".
+A plausible out-of-range value (e.g. 30 V) is still a normal UUT failure. Open
+question: three station runs hit an instrument problem 30–50 s into the 100 W
+wait (twice lost comms, once 9999) — watch the load's front panel then.
+
 The driver's comms-recovery budget (`_RECONNECT_BUDGET_S`) is 15 s, up from 5 s,
 which equalled one query timeout: twice on the station a single late reply
 failed a burn-in although the instrument answered again seconds later. Not

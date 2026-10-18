@@ -115,6 +115,39 @@ class _MonitorOutOfRange(Exception):
         )
 
 
+# Readings the instrument cannot have measured. The 3300G answered a voltage
+# query with "9999" 47 s into a 100 W wait on the station — a no-valid-reading
+# code, not 9999 V — and it was reported as the UUT's voltage. Anything at or
+# above the sentinel, or a voltage beyond what a 24 V product and the 3316G can
+# produce, is treated as an instrument fault, re-read, and never as the UUT.
+_INVALID_READING_SENTINEL = 9990.0
+_MAX_PLAUSIBLE_VOLTS = 100.0
+_VOLTAGE_READS = frozenset({"measvoltage", "readinput", "checkpolarity"})
+_VALIDATED_READS = _VOLTAGE_READS | {"meascurrent", "measpower"}
+_INVALID_READING_RETRIES = 2
+_INVALID_READING_RETRY_S = 0.2
+
+
+class InvalidReadingError(Exception):
+    """The instrument returned a value it cannot have measured (e.g. 9999)."""
+
+    def __init__(self, command: str, value: float) -> None:
+        self.command = command
+        self.value = value
+        super().__init__(
+            f"instrument returned an invalid reading ({value:g}) for {command} — "
+            "check the load's front panel"
+        )
+
+
+def _is_invalid_reading(command: str, value: float | None) -> bool:
+    if value is None:
+        return False
+    if abs(value) >= _INVALID_READING_SENTINEL:
+        return True
+    return command in _VOLTAGE_READS and abs(value) > _MAX_PLAUSIBLE_VOLTS
+
+
 class _MonitorReadFailed(Exception):
     """Raised when monitoring cannot read the voltage at all during a `Delay`.
 
@@ -301,6 +334,30 @@ class TestRunnerThread(QThread):
                 pass
 
     def _hw_execute(self, command: str, args: list[str]) -> float:
+        """Execute a hardware command; re-read an impossible measurement.
+
+        A V/I/P read that comes back as an instrument code (9999) or an
+        impossible voltage is retried; if it persists, `InvalidReadingError` is
+        raised so the step fails as an instrument fault rather than recording
+        the code as the UUT's value.
+        """
+        value = self._hw_execute_raw(command, args)
+        if command not in _VALIDATED_READS:
+            return value
+        for _ in range(_INVALID_READING_RETRIES):
+            if not _is_invalid_reading(command, value):
+                return value
+            self._emit_log(
+                "error",
+                f"Invalid reading {value:g} for {command}; reading again.",
+            )
+            time.sleep(_INVALID_READING_RETRY_S)
+            value = self._hw_execute_raw(command, args)
+        if _is_invalid_reading(command, value):
+            raise InvalidReadingError(command, value)
+        return value
+
+    def _hw_execute_raw(self, command: str, args: list[str]) -> float:
         """Execute a hardware command, re-selecting the slot atomically when shared."""
         if self._hw_lock is not None and self._current_unit is not None:
             with self._hw_lock:
@@ -1174,6 +1231,15 @@ class TestRunnerThread(QThread):
                 )
                 self._fail_note = f"at {exc.elapsed_s:.1f} s"
                 return False, exc.value
+            except InvalidReadingError as exc:
+                # An instrument code (e.g. 9999), not a measurement: fail the
+                # step with no value, and say it was the instrument.
+                self._emit_log("error", f"ERROR in {step.name}: {exc!s}")
+                self._fail_note = (
+                    f"invalid reading from the instrument ({exc.value:g}) — "
+                    "check the load's front panel"
+                )
+                return False, None
             except _MonitorReadFailed as exc:
                 # The instrument stopped answering mid-delay and did not come
                 # back within the driver's reconnect budget. There is no
@@ -1409,6 +1475,8 @@ class TestRunnerThread(QThread):
                     # monitoring run for the *entire* duration.
                     try:
                         v = self._hw_execute("measvoltage", [])
+                    except InvalidReadingError:
+                        raise  # reported as an instrument fault, see _run_step
                     except Exception as exc:
                         raise _MonitorReadFailed(exc, elapsed_ms / 1000) from exc
                     if v is None:
