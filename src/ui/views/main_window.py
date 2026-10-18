@@ -130,6 +130,9 @@ class MainWindow(QMainWindow):
         # One entry per in-flight report. A list rather than a single slot so a
         # parallel run's workers cannot overwrite each other's reference.
         self._report_workers: list[ReportWorker] = []
+        # Set once the window has agreed to close. After that no result dialog
+        # may open: see closeEvent for why one would leave the app running.
+        self._closing = False
         # Pin the station's hardware config now, while the window is opening and
         # before the admin can reach the Connections dialog. The factory caches on
         # first read, so without this the first read could happen *after* a
@@ -1716,6 +1719,7 @@ class MainWindow(QMainWindow):
             if confirm != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
+        self._closing = True
         app = QApplication.instance()
         if app is not None and not bool(app.property("logout_requested")):
             try:
@@ -1730,6 +1734,16 @@ class MainWindow(QMainWindow):
         self._shutdown_threads()
         self._cleanup_operator_temp()
         super().closeEvent(event)
+        # Leave the event loop explicitly instead of relying on Qt's "last
+        # window closed" quit. That check runs only at the moment this window
+        # closes: a runner stopped by the close finishes a moment later and
+        # used to open its result dialog ("Run stopped", PASS/FAIL), which made
+        # Qt cancel the quit — and closing that dialog never re-checks. The
+        # process then sat in app.exec() with no window, holding the
+        # single-instance lock ("Application is already running"). exit()
+        # cannot be cancelled; main() then handles logout or exit as before.
+        if app is not None:
+            app.exit(0)
 
     def _on_loop_started(self, loop_number: int, loop_total: int) -> None:
         """Insert a visual separator row before each new loop iteration."""
@@ -2040,6 +2054,8 @@ class MainWindow(QMainWindow):
         self._unlock_pre_test_fields()
         self.test_thread = None
 
+        if self._closing:
+            return  # no dialogs once the window is closing — see closeEvent
         if nothing_tested:
             # A FAIL banner here would blame a unit that was never tested, and
             # an Operator cannot see the Messages tab that holds the reason.
@@ -2055,6 +2071,8 @@ class MainWindow(QMainWindow):
             self.sequence_finished.emit(overall_passed)
 
     def _show_result_dialog(self, passed: bool) -> None:
+        if self._closing:
+            return
         TestResultDialog(passed, parent=self).exec()
 
     @staticmethod
@@ -2069,6 +2087,8 @@ class MainWindow(QMainWindow):
 
     def _show_stopped_message(self, serials: list[str], *, some_completed: bool = False) -> None:
         """Shown instead of the PASS/FAIL banner: a stopped run has no verdict."""
+        if self._closing:
+            return
         text = (
             "Run stopped by operator.\n\n"
             f"No report was saved for: {', '.join(serials)}."

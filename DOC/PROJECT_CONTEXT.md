@@ -594,6 +594,19 @@ decision; `aborted_by_operator` is deliberately separate so as not to change it.
 
 ## Shutdown must never depend on an operator answer
 
+**Closing the window exits the event loop explicitly** (2026-10-15).
+`closeEvent` ends with `app.exit(0)` instead of relying on Qt's
+quit-on-last-window-closed. That check runs only at the instant the main window
+closes: a runner stopped by the close finishes a moment later and used to open
+its result dialog ("Run stopped", PASS/FAIL), which made Qt cancel the pending
+quit — and closing that dialog (it has a parent) never re-checks. The process
+then idled in `app.exec()` with every window hidden, holding the
+single-instance lock, so the next launch said "Application is already running".
+Diagnosed on the station with `py-spy dump` (main thread idle at
+`main.py: app.exec()`, all top-level windows hidden). `_closing` also suppresses
+the result dialogs once the window has agreed to close. Logout is unaffected:
+`exec()` returns and `main()` reopens the login dialog as before.
+
 Closing the app while a `PromptYesNo` was pending used to leave the process
 alive with an invisible window, holding the single-instance lock (so it would
 not restart) and, in a hardware run, the instrument's one TCP slot. Two causes,
