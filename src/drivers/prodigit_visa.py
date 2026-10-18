@@ -54,7 +54,14 @@ _RESISTANCE_VERIFY_ATTEMPTS = 2
 # If a VISA I/O op fails (e.g. the load drops the TCP socket mid-run), keep
 # trying to reconnect and retry the op for this long before giving up and
 # letting the error propagate (so the run aborts as before).
-_RECONNECT_BUDGET_S = 5.0
+#
+# 15 s, raised from 5 s (2026-10-18). 5 s equalled a single query timeout
+# (PRODIGIT_VISA_TIMEOUT_MS = 5000), so one late reply failed a whole burn-in:
+# twice on the station the instrument stopped answering for a few seconds
+# mid-run, then answered again (the load-off right after was verified). 15 s
+# allows ~2-3 attempts; it is deliberately not unbounded, because the spec's
+# continuous monitoring cannot tolerate a long unmonitored gap.
+_RECONNECT_BUDGET_S = 15.0
 # Pause between a failed op / reconnect attempt and the next retry.
 _RECONNECT_RETRY_DELAY_S = 0.5
 # Settle between LOAD OFF and the LOAD? that confirms it. Measured on the

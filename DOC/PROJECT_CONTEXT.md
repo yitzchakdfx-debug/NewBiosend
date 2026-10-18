@@ -547,6 +547,24 @@ moves through the long waits. Counting steps showed 36 % one minute into the
 ~32-minute script (7 of 19 steps done, but the four waits hold ~31 minutes);
 now that point reads 4 %, the end of the 15-minute wait ~51 %.
 
+### Results table: why a unit failed
+
+The Result column says what the unit did and what it had to meet (2026-10-18),
+for every role — the Value/Min/Max columns are hidden for some, and the reason
+used to live only in the Messages tab. Examples: `FAIL — 14.97 V (OK 22.8–25.2
+V), at 0.3 s`; `FAIL — no reading — instrument not responding (30.1 s) (OK
+22.8–25.2 V)`; `FAIL — answered Fail` (LED). The engine attaches the reason as
+the payload's optional `note` (`_fail_note`, set in `_run_step` from
+`_MonitorOutOfRange` / `_MonitorReadFailed` / a command error). Steps not
+performed after a failure carry `skipped` and show grey **N/A** instead of a red
+FAIL — matching the PDF/XML — and no longer count in the FAIL counter. Failing
+rows grow to wrap the text.
+
+The driver's comms-recovery budget (`_RECONNECT_BUDGET_S`) is 15 s, up from 5 s,
+which equalled one query timeout: twice on the station a single late reply
+failed a burn-in although the instrument answered again seconds later. Not
+unbounded, because continuous monitoring cannot tolerate a long gap.
+
 ### Live readings pane
 
 The bottom of the main window is a `QTabWidget`: **Live Readings** (every role)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 from logic.roles import ALL_ROLES
 
@@ -77,6 +77,12 @@ class TestResultPayload(TypedDict):
     unit: str
     passed: bool
     is_measurement: bool
+    #: Not performed: an earlier test failed or the run stopped (spec §1.1.4.5
+    #: "N/A"). Shown as N/A, not FAIL, and not counted as a failure.
+    skipped: NotRequired[bool]
+    #: Why the step failed, beyond value vs. limits — e.g. "at 0.3 s" or
+    #: "no reading — instrument not responding (30.1 s)". Display only.
+    note: NotRequired[str]
 
 
 @dataclass(frozen=True, slots=True)

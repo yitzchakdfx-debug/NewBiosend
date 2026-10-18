@@ -1807,10 +1807,44 @@ class MainWindow(QMainWindow):
         item.setFlags(Qt.ItemFlag.ItemIsEnabled)
         self.results_table.setItem(row, 0, item)
 
+    @staticmethod
+    def _failure_text(result: TestResultPayload) -> str:
+        """What the unit did when it failed, against the range it had to meet.
+
+        e.g. "FAIL — 14.97 V (OK 22.8–25.2 V), at 0.3 s". Shown in
+        the Result column for every role: the operator has to know why a unit
+        failed, and the Value/Min/Max columns are hidden for some roles.
+        """
+        unit = str(result.get("unit", "") or "")
+        note = str(result.get("note", "") or "")
+        if unit == "pass":  # a PromptYesNo step such as the LED check
+            return "FAIL — answered Fail"
+        value, lo, hi = result.get("value"), result.get("min"), result.get("max")
+        measured = ""
+        if result.get("is_measurement", True) and isinstance(value, (int, float)) and math.isfinite(value):
+            measured = f"{value:.2f} {unit}".rstrip()
+        allowed = ""
+        if (
+            isinstance(lo, (int, float)) and isinstance(hi, (int, float))
+            and math.isfinite(lo) and math.isfinite(hi)
+        ):
+            allowed = f"(OK {lo:g}–{hi:g} {unit})".replace(" )", ")")
+        if measured:
+            text = f"FAIL — {measured} {allowed}".rstrip()
+            return f"{text}, {note}" if note else text
+        # No reading: lead with why, then the range it had to meet.
+        return f"FAIL — {note or 'no reading'} {allowed}".rstrip()
+
     def _fill_result_row(self, row: int, test_name: str, result: TestResultPayload) -> None:
         passed = bool(result["passed"])
-        status = "PASS" if passed else "FAIL"
-        is_measurement = bool(result.get("is_measurement", True))
+        skipped = bool(result.get("skipped", False))
+        if skipped:
+            status = "N/A"  # not performed (spec §1.1.4.5), not a failure
+        elif passed:
+            status = "PASS"
+        else:
+            status = self._failure_text(result)
+        is_measurement = bool(result.get("is_measurement", True)) and not skipped
 
         if is_measurement:
             unit_str = result["unit"]
@@ -1829,9 +1863,16 @@ class MainWindow(QMainWindow):
 
         status_item = QTableWidgetItem(status)
         status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        status_item.setToolTip(status)
         self.results_table.setItem(row, 4, status_item)
+        if not passed and not skipped:
+            # The reason can be wider than the column; let the row grow so it
+            # wraps instead of being cut off with "...".
+            self.results_table.resizeRowToContents(row)
 
     def _update_pass_fail_counters(self, result: TestResultPayload) -> None:
+        if result.get("skipped"):
+            return  # N/A rows are neither a pass nor a fail
         passed = bool(result["passed"])
         if passed:
             n = self._parse_labeled_counter(self.control_panel.label_pass.text(), "PASS") + 1

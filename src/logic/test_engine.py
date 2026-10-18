@@ -257,6 +257,9 @@ class TestRunnerThread(QThread):
         self._reports: list[BatchUnitReport] = []
         self._current_unit: BatchUnit | None = None
         self._current_step: TestStep | None = None
+        # Why the last `_run_step` failed, for the results table ("at 0.3 s",
+        # "no reading — instrument not responding (30.1 s)").
+        self._fail_note = ""
         # Time-weighted Total progress for the current unit (see `_emit_total`).
         self._progress_total_s = 0.0
         self._progress_done_s = 0.0
@@ -597,7 +600,7 @@ class TestRunnerThread(QThread):
                 "passed": False,
                 "is_measurement": False,
             }
-            self._emit_result(unit, step.name, na_payload)
+            self._emit_result(unit, step.name, {**na_payload, "skipped": True})
             record.results.append(
                 {
                     "test_name": step.name,
@@ -776,6 +779,8 @@ class TestRunnerThread(QThread):
                     "passed": passed,
                     "is_measurement": value is not None,
                 }
+                if not passed and self._fail_note:
+                    payload["note"] = self._fail_note
                 if not getattr(step, "hidden", False):
                     self._emit_result(unit, step.name, payload)
                     record.results.append(
@@ -1143,6 +1148,7 @@ class TestRunnerThread(QThread):
         n = max(1, len(step.commands))
         # Lets `_execute_command` recognise the LED step's PromptYesNo.
         self._current_step = step
+        self._fail_note = ""
 
         for idx, cmd in enumerate(step.commands, start=1):
             if self._stop_requested:
@@ -1166,6 +1172,7 @@ class TestRunnerThread(QThread):
                     "error",
                     f"ERROR in {step.name}: command {cmd['cmd']!r} raised: {exc!s}",
                 )
+                self._fail_note = f"at {exc.elapsed_s:.1f} s"
                 return False, exc.value
             except _MonitorReadFailed as exc:
                 # The instrument stopped answering mid-delay and did not come
@@ -1177,12 +1184,16 @@ class TestRunnerThread(QThread):
                     "error",
                     f"ERROR in {step.name}: monitoring aborted — {exc!s}",
                 )
+                self._fail_note = (
+                    f"no reading — instrument not responding ({exc.elapsed_s:.1f} s)"
+                )
                 return False, None
             except Exception as exc:
                 self._emit_log(
                     "error",
                     f"ERROR in {step.name}: command {cmd['cmd']!r} raised: {exc!s}",
                 )
+                self._fail_note = f"{cmd['cmd']} failed: {str(exc)[:80]}"
                 return False, last_measurement
 
             self.progress_test.emit(min(99, int((idx / n) * 100)))
