@@ -611,7 +611,9 @@ one **column** per UUT in the current run — 1 to 4, from the batch dialog — 
 headed by its load channel and serial (`CH2` / `SN-0002`), and one row each for
 Voltage [V], Current [A] and Power [W]. It is a run-time view only; values stay
 at their last reading after the run. There is no idle readout: the former
-right-hand "Power Supply" panel and its `MonitorThread` were removed.
+right-hand "Power Supply" panel and its `MonitorThread` were removed. Values are
+drawn at 15pt bold (`QTableWidget#live_readings_table` in both `.qss` themes)
+so they read from a distance.
 
 `live_reading` carries `{slot, serial}` plus any of `V`/`A`/`W`, and is partial
 by design (the UI merges). It reuses the runner's connection — the 3300G accepts

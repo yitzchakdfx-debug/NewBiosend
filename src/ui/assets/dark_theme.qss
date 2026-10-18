@@ -70,6 +70,13 @@ QTextEdit#trace_log {
     border-radius: 4px;
 }
 
+/* Live V/A/W readings: larger than the 11pt base so they read at a glance.
+   Placed before the generic table rule; the ID selector wins regardless. */
+QTableWidget#live_readings_table {
+    font-size: 15pt;
+    font-weight: bold;
+}
+
 QTableWidget, QTableView {
     background-color: #313335;
     color: #e0e0e0;
