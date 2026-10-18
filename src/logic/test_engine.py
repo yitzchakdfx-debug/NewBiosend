@@ -645,7 +645,12 @@ class TestRunnerThread(QThread):
         rows carry `_report_fields(step)`, so the mapping is present and the XML
         renders the tests as N/A.
         """
-        executed = {r["test_name"] for r in record.results}
+        # Only this loop's rows: a step that ran in loop 1 still needs its N/A
+        # row when loop 2 aborts before reaching it.
+        executed = {
+            r["test_name"] for r in record.results
+            if int(r.get("loop", 1) or 1) == loop_number
+        }
         for step in steps:
             if step.name in executed or getattr(step, "hidden", False):
                 continue
@@ -659,7 +664,7 @@ class TestRunnerThread(QThread):
             }
             self._emit_result(
                 unit, step.name,
-                {**na_payload, "skipped": True, **self._report_fields(step)},
+                {**na_payload, "skipped": True, "loop": loop_number, **self._report_fields(step)},
             )
             record.results.append(
                 {
@@ -843,10 +848,11 @@ class TestRunnerThread(QThread):
                     payload["note"] = self._fail_note
                 if not getattr(step, "hidden", False):
                     # Report fields let the results table merge one time
-                    # point's V/I/P/R steps into a single row.
+                    # point's V/I/P/R steps into a single row; the loop number
+                    # keeps loop 2's points from merging into loop 1's rows.
                     self._emit_result(
                         unit, step.name,
-                        {**payload, **self._report_fields(step)},
+                        {**payload, "loop": loop_number, **self._report_fields(step)},
                     )
                     record.results.append(
                         {

@@ -577,7 +577,7 @@ rows grow to wrap the text.
 **One row per measurement point** (2026-10-18). The table used to show one row
 per quantity — V, I, P, R at every point, 19 rows per unit, each with a green
 PASS although only voltage has limits. Steps carrying a `Quantity` now merge by
-(unit, `report_test`, `Measurement` index) into one row, the way Appendix A lays
+(unit, loop, `report_test`, `Measurement` index) into one row, the way Appendix A lays
 a point out: `Low Load Stability Test  t1 (1 min) | 25.62 V · 0.436 A · 11.18 W ·
 57.6 Ω | PASS`. The verdict and Min/Max come from the limited quantity (voltage);
 a failing component gives the row its failure text; an all-skipped point is
@@ -585,7 +585,10 @@ N/A. The engine includes `_report_fields(step)` in every emitted result for
 this; reports and CSV are unchanged. Rows are located by their cell item, not
 row number, because parallel sections insert rows above them, and row heights
 re-flow when the table resizes. Steps without a `Quantity` (input check, LED,
-polarity, older scripts) keep one row each.
+polarity, older scripts) keep one row each. The loop number is part of the key
+(the engine sends `loop` with each result), so with **Loops** > 1 every pass gets
+its own rows instead of merging into loop 1's; `_backfill_skipped` likewise
+looks only at the current loop when deciding which steps still need an N/A row.
 
 **Impossible readings are instrument faults, not UUT values.** On the station
 the 3300G answered a voltage query with `9999` 47 s into the 100 W wait; it was

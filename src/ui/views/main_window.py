@@ -1997,6 +1997,7 @@ class MainWindow(QMainWindow):
         return (
             result.get("position_label", ""),
             result.get("serial_number", ""),
+            int(result.get("loop", 1) or 1),  # each Loops pass gets its own rows
             result.get("report_test", ""),
             result.get("report_index", 0),
         )

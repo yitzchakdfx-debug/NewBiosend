@@ -83,6 +83,8 @@ class TestResultPayload(TypedDict):
     #: Why the step failed, beyond value vs. limits — e.g. "at 0.3 s" or
     #: "no reading — instrument not responding (30.1 s)". Display only.
     note: NotRequired[str]
+    #: Which pass of a Loops run this is (1-based); keys the merged result rows.
+    loop: NotRequired[int]
 
 
 @dataclass(frozen=True, slots=True)
