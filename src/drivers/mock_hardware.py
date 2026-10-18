@@ -48,6 +48,11 @@ class MockHardware(BaseDriver):
         """No-op slot selection for the mock driver."""
         time.sleep(0.05)
 
+    def load_off_verified(self, attempts: int = 3) -> str:
+        """Mirror of `ProdigitVisaDriver.load_off_verified`: off, then read back."""
+        self.execute_command("loadoff", [])
+        return "1" if self._load_on else "0"
+
     def connect(self) -> bool:
         self.connected = True
         return True

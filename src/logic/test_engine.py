@@ -1272,7 +1272,7 @@ class TestRunnerThread(QThread):
         """
         label = f" [{unit.serial_number}]" if unit is not None else ""
 
-        def _send() -> None:
+        def _send() -> str:
             # The 3300G applies LOAD OFF to whichever channel was selected last.
             # Select this unit's channel first, inside the same lock: in a
             # parallel run the last selection usually belongs to another unit
@@ -1283,15 +1283,21 @@ class TestRunnerThread(QThread):
                 self._hw.activate_slot(
                     unit.slot_index, load_serial_number=unit.load_serial_number
                 )
+            # Read the state back rather than trusting the write: on the
+            # station three units logged "Load off confirmed" and stayed on.
+            verify = getattr(self._hw, "load_off_verified", None)
+            if callable(verify):
+                return str(verify())
             self._hw.execute_command("loadoff", [])
+            return "not read back"
 
         try:
             if self._hw_lock is not None:
                 with self._hw_lock:
-                    _send()
+                    reply = _send()
             else:
-                _send()
-            self._emit_log("info", f"Load off confirmed{label}.")
+                reply = _send()
+            self._emit_log("info", f"Load off verified{label} (LOAD? -> {reply}).")
             return True
         except Exception as exc:
             reason = (

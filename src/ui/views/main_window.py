@@ -1678,10 +1678,12 @@ class MainWindow(QMainWindow):
         started a run, or after a run whose thread had already gone away, where
         the load could still be holding a state set by an aborted attempt.
 
-        Silent and best-effort — the window is closing, so a modal warning has
-        nowhere to go. The trace pane still records the outcome, and the run-time
-        paths raise the loud warning where an operator can act on it.
+        Every channel is switched off and read back. If one still reports ON,
+        or the instrument cannot be reached, the operator is warned *before*
+        the window closes (this runs from closeEvent while it is still shown):
+        a silent trace line here is how loads were once left on unnoticed.
         """
+        failures: list[str] = []
         try:
             # Short timeout and no identity probe: the window is closing, so a
             # missing instrument must not stall the exit.
@@ -1690,16 +1692,36 @@ class MainWindow(QMainWindow):
                 driver.connect()
                 # LOAD OFF acts on the selected channel only, so a bare one
                 # switched off a single channel of up to four. Select each in
-                # turn.
+                # turn, and read each back.
+                verify = getattr(driver, "load_off_verified", None)
                 for slot, load_serial in enumerate(LOAD_SERIALS or [""], start=1):
-                    if hasattr(driver, "activate_slot"):
-                        driver.activate_slot(slot, load_serial_number=load_serial)
-                    driver.execute_command("loadoff", [])
-                self.append_trace("Load off confirmed on exit (all channels).")
+                    try:
+                        if hasattr(driver, "activate_slot"):
+                            driver.activate_slot(slot, load_serial_number=load_serial)
+                        if callable(verify):
+                            verify()
+                        else:
+                            driver.execute_command("loadoff", [])
+                    except Exception as exc:
+                        failures.append(f"CH{slot}: {exc}")
             finally:
                 driver.disconnect()
         except Exception as exc:
-            self.append_trace(f"Could not confirm load off on exit: {exc}")
+            failures.append(f"instrument not reachable: {exc}")
+
+        if not failures:
+            self.append_trace("Load off verified on exit (all channels).")
+            return
+        detail = "\n".join(failures)
+        self.append_trace(f"Could not verify load off on exit:\n{detail}")
+        QMessageBox.critical(
+            self,
+            "LOAD MAY STILL BE ON",
+            "Could not confirm that every electronic load channel is OFF:\n\n"
+            f"{detail}\n\n"
+            "If a UUT is connected, switch the load off at its front panel or "
+            "disconnect the UUT.",
+        )
 
     def logout(self) -> None:
         """Closes the main window and signals the application to restart the login flow."""

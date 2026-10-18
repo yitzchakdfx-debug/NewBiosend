@@ -364,6 +364,19 @@ ran — while its own load stayed on. It now calls `activate_slot` and `loadoff`
 inside the same `hw_lock`, like `_hw_execute`. `_release_load_on_exit` likewise
 selects and switches off every channel in `LOAD_SERIALS` instead of one.
 
+**Every engine and exit load-off is read back** (2026-10-18). A station run with
+three units logged "Load off confirmed" for each while all three loads stayed on:
+a write over TCP "succeeds" even when the instrument has stopped processing
+commands (the run also lost the instrument mid-burn-in, `VI_ERROR_TMO`). A probe
+on the station confirmed `CHAN n` takes effect immediately and `LOAD OFF` works
+on a responsive instrument, so the defect was trusting the write.
+`ProdigitVisaDriver.load_off_verified()` sends `LOAD OFF`, reads `LOAD?`, retries
+up to 3 times and raises if the load still reports on or the instrument does not
+answer; `_force_load_off` uses it (logging `LOAD? -> 0`) and otherwise emits
+`load_shutdown_failed`, and `_release_load_on_exit` verifies every channel and
+shows a critical warning before the window closes. Verified on the station on an
+empty channel (0.22 s). Root cause of the lost instrument is still open.
+
 **What software cannot do:** switch off a load it cannot reach. Pulling the
 load's LAN cable aborts the test (see monitoring below) but leaves it drawing
 current, and `loadoff` then fails. `_force_load_off` therefore emits

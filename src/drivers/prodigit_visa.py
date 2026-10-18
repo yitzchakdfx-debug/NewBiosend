@@ -57,6 +57,9 @@ _RESISTANCE_VERIFY_ATTEMPTS = 2
 _RECONNECT_BUDGET_S = 5.0
 # Pause between a failed op / reconnect attempt and the next retry.
 _RECONNECT_RETRY_DELAY_S = 0.5
+# Settle between LOAD OFF and the LOAD? that confirms it. Measured on the
+# station: the state reads back correctly even with no pause; this is margin.
+_LOAD_OFF_VERIFY_SETTLE_S = 0.2
 
 # Magnitude reported when a polarity query answers with a word ("positive",
 # "reverse", ...) rather than a number. Only the sign is meaningful; the
@@ -287,6 +290,26 @@ class ProdigitVisaDriver(BaseDriver):
                     pass
         finally:
             self._ctx = None
+
+    def load_off_verified(self, attempts: int = 3) -> str:
+        """Send LOAD OFF on the selected channel and confirm it with LOAD?.
+
+        A bare write proves nothing: over TCP it "succeeds" even when the
+        instrument has stopped processing commands, and a run on the station
+        logged "Load off confirmed" for three units whose loads stayed on.
+        Retries the write, then raises `HardwareError` if the instrument still
+        reports the load on — or does not answer at all. Returns the reply.
+        """
+        reply = ""
+        for _ in range(max(1, attempts)):
+            self._write(PRODIGIT_SET_LOAD, state="OFF")
+            time.sleep(_LOAD_OFF_VERIFY_SETTLE_S)
+            reply = self._query_text(PRODIGIT_QUERY_LOAD).strip().upper()
+            if reply in {"0", "OFF"}:
+                return reply
+        raise HardwareError(
+            f"load still reports {reply!r} after {attempts} LOAD OFF attempts"
+        )
 
     def activate_slot(self, slot_index: int, *, load_serial_number: str = "") -> None:
         self._active_slot = max(1, int(slot_index))
