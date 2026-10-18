@@ -119,7 +119,7 @@ class ScriptEditorDialog(QDialog):
             "<i>Save creates a new catalog version only (this row is not overwritten).</i>"
         )
         self.setWindowTitle(
-            f"Test Script Editor — {test_name} ({version_name})"
+            f"Test Script Editor - {test_name} ({version_name})"
         )
         self._status_label.setText("")
 

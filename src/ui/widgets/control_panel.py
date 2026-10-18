@@ -131,7 +131,7 @@ class UnitProgressRow(QWidget):
         self._started = None
         self._done = False
         self.bar.setValue(0)
-        self._step.setText("—")
+        self._step.setText("-")
         self._step.setToolTip("")
         self._time.setText("--:--")
 
@@ -149,7 +149,7 @@ class UnitProgressRow(QWidget):
                 self._done = True
                 self.bar.setValue(100)
             else:
-                self._step.setText("—")
+                self._step.setText("-")
             return
         self._done = False
         self._started = time.monotonic()
@@ -226,7 +226,7 @@ class ControlPanelWidget(QWidget):
         unit_form = _make_form(unit_box)
         self.edit_uut_type = QLineEdit()
         self.edit_uut_type.setReadOnly(True)
-        self.edit_uut_type.setPlaceholderText("—")
+        self.edit_uut_type.setPlaceholderText("-")
         unit_form.addRow("UUT type", self.edit_uut_type)
         self.edit_part_number = QLineEdit()
         unit_form.addRow("Part number", self.edit_part_number)
@@ -249,7 +249,7 @@ class ControlPanelWidget(QWidget):
         )
         self.edit_current_unit = QLineEdit()
         self.edit_current_unit.setReadOnly(True)
-        self.edit_current_unit.setPlaceholderText("—")
+        self.edit_current_unit.setPlaceholderText("-")
         status_form.addRow("Unit", self.edit_current_unit)
 
         self.progress_total = QProgressBar()

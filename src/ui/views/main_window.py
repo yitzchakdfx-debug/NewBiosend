@@ -167,7 +167,7 @@ class MainWindow(QMainWindow):
             # Roles that cannot pick individual steps start with no script at
             # all and must choose a product first.
             self._active_script_path = Path()
-            self.label_active_script.setText("No test — use Select Product.")
+            self.label_active_script.setText("No test - use Select Product.")
             self.test_list.clear()
             self._catalog_test_name = ""
             self._catalog_uut_type = ""
@@ -953,13 +953,13 @@ class MainWindow(QMainWindow):
             # plus a spurious "XML not generated" modal.
             self._last_run_meta = None
             self._last_run_rows = []
-            self.append_trace("No unit was tested — no report generated.")
+            self.append_trace("No unit was tested - no report generated.")
             return
         if reports[-1].aborted_by_operator:
             self._last_run_meta = None
             self._last_run_rows = []
             self.append_trace(
-                f"{reports[-1].unit.serial_number}: stopped by operator — "
+                f"{reports[-1].unit.serial_number}: stopped by operator - "
                 "no report saved."
             )
             return
@@ -976,11 +976,11 @@ class MainWindow(QMainWindow):
         # this method once per unit inside a loop.
         if not self._can(Capability.GENERATE_REPORTS):
             self.append_trace(
-                "Maintenance mode — no test report generated for this run."
+                "Maintenance mode - no test report generated for this run."
             )
             return
         if not self.control_panel.chk_save_log.isChecked():
-            self.append_trace("Save as log disabled — skipping PDF archive.")
+            self.append_trace("Save as log disabled - skipping PDF archive.")
             return
         # Kept in a list, not a single attribute. A parallel run calls this once
         # per UUT in a tight loop, and a lone slot meant unit N+1 overwrote unit
@@ -1224,7 +1224,7 @@ class MainWindow(QMainWindow):
         self.control_panel.edit_user_name.setReadOnly(True)
         self._pre_test_locked = True
         self.control_panel.edit_current_unit.setText(
-            f"1 / {len(batch_units)} — {first_serial}"
+            f"1 / {len(batch_units)} - {first_serial}"
         )
 
         self._start_test_run(dialog_results)
@@ -1540,7 +1540,7 @@ class MainWindow(QMainWindow):
         position_label: str,
     ) -> None:
         self.control_panel.edit_current_unit.setText(
-            f"{index}/{total} — {serial_number} — {position_label}"
+            f"{index}/{total} - {serial_number} - {position_label}"
         )
         self.control_panel.edit_serial_number.setText(serial_number)
 
@@ -1871,7 +1871,7 @@ class MainWindow(QMainWindow):
         unit = str(result.get("unit", "") or "")
         note = str(result.get("note", "") or "")
         if unit == "pass":  # a PromptYesNo step such as the LED check
-            return "FAIL — answered Fail"
+            return "FAIL - answered Fail"
         value, lo, hi = result.get("value"), result.get("min"), result.get("max")
         measured = ""
         if result.get("is_measurement", True) and isinstance(value, (int, float)) and math.isfinite(value):
@@ -1881,12 +1881,12 @@ class MainWindow(QMainWindow):
             isinstance(lo, (int, float)) and isinstance(hi, (int, float))
             and math.isfinite(lo) and math.isfinite(hi)
         ):
-            allowed = f"(OK {lo:g}–{hi:g} {unit})".replace(" )", ")")
+            allowed = f"(OK {lo:g}-{hi:g} {unit})".replace(" )", ")")
         if measured:
-            text = f"FAIL — {measured} {allowed}".rstrip()
+            text = f"FAIL - {measured} {allowed}".rstrip()
             return f"{text}, {note}" if note else text
         # No reading: lead with why, then the range it had to meet.
-        return f"FAIL — {note or 'no reading'} {allowed}".rstrip()
+        return f"FAIL - {note or 'no reading'} {allowed}".rstrip()
 
     def _fill_result_row(self, row: int, test_name: str, result: TestResultPayload) -> None:
         passed = bool(result["passed"])

@@ -236,7 +236,7 @@ def validate_xml_template(text: str) -> None:
         )
     if len(markers[0]) or (markers[0].text or "").strip():
         raise TemplateError(
-            f"<{TESTS_PLACEHOLDER}/> must be empty — its contents are generated."
+            f"<{TESTS_PLACEHOLDER}/> must be empty - its contents are generated."
         )
 
     # Comments are dropped when the template is parsed, so placeholders inside

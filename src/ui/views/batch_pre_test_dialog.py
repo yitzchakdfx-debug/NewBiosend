@@ -223,12 +223,12 @@ class BatchPreTestDialog(QDialog):
         if active_slots:
             channels = ", ".join(f"CH{s}" for s in active_slots)
             self._scan_label.setText(
-                f"{len(active_slots)} UUT(s) detected on {channels} — "
+                f"{len(active_slots)} UUT(s) detected on {channels} - "
                 "check or uncheck any channel to add or remove a device."
             )
         else:
             self._scan_label.setText(
-                "No UUTs detected — check the channels you want to test manually."
+                "No UUTs detected - check the channels you want to test manually."
             )
 
         # Pre-select the detected channels; the operator can still toggle any
@@ -388,15 +388,15 @@ class BatchPreTestDialog(QDialog):
             box = QMessageBox(self)
             box.setIcon(QMessageBox.Icon.Warning)
             box.setWindowTitle("LED not marked")
-            box.setText(f"CH{slot} — {serial}: the LED is not marked as ON.")
+            box.setText(f"CH{slot} - {serial}: the LED is not marked as ON.")
             box.setInformativeText(
                 "Is the green LED really off, or did you forget to tick it?"
             )
             forgot = box.addButton(
-                "I forgot — go back", QMessageBox.ButtonRole.RejectRole
+                "I forgot - go back", QMessageBox.ButtonRole.RejectRole
             )
             really_off = box.addButton(
-                "LED is really OFF — fail this unit",
+                "LED is really OFF - fail this unit",
                 QMessageBox.ButtonRole.DestructiveRole,
             )
             box.setDefaultButton(forgot)

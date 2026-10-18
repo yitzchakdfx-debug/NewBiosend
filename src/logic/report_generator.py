@@ -192,7 +192,7 @@ def _header_rows(run_meta: dict[str, Any], role: str) -> list[tuple[str, str]]:
         )
     values["load_channel_id"] = load_ch
     if not values.get("overall_result"):
-        values["overall_result"] = "—"
+        values["overall_result"] = "-"
 
     rows: list[tuple[str, str]] = []
     for entry in read_pdf_template().get("header_fields", []):
@@ -370,7 +370,7 @@ def _measurement_lines(rows: list[dict[str, Any]]) -> list[tuple[str, str]]:
             if row is None:
                 continue
             shown = "N/A" if row.get("skipped") else _fmt_num(row.get("value"))
-            parts.append(f"{quantity} {shown or '—'} [{uom}]")
+            parts.append(f"{quantity} {shown or '-'} [{uom}]")
         if not parts:
             continue
         label = ""
@@ -687,7 +687,7 @@ def write_xml_report(path: Path, run_meta: dict[str, Any], results: list[dict[st
             raise XmlMappingMissingError(
                 "Cannot write the CAMSTAR XML report: the run stopped before any "
                 "test was performed, so there are no results to report. This is "
-                "usually a station fault rather than a script problem — check "
+                "usually a station fault rather than a script problem - check "
                 "that the electronic load is powered and reachable at the "
                 "configured address (Admin > Connections), or switch to the "
                 "Simulator backend to test without hardware. The script itself "

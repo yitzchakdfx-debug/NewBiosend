@@ -91,7 +91,7 @@ class ConnectionsDialog(QDialog):
         note = QLabel(
             "Changing the backend takes effect the next time the application "
             "starts. Leave a field empty to fall back to the .env default shown "
-            "in grey — that is also how you undo a change made here."
+            "in grey - that is also how you undo a change made here."
         )
         note.setWordWrap(True)
         root.addWidget(note)

@@ -135,7 +135,7 @@ class InvalidReadingError(Exception):
         self.command = command
         self.value = value
         super().__init__(
-            f"instrument returned an invalid reading ({value:g}) for {command} — "
+            f"instrument returned an invalid reading ({value:g}) for {command} - "
             "check the load's front panel"
         )
 
@@ -930,7 +930,7 @@ class TestRunnerThread(QThread):
             # stay on the report object for the on-screen table only.
             self._emit_log(
                 "info",
-                f"{unit.serial_number}: run stopped by operator — not saved, no report.",
+                f"{unit.serial_number}: run stopped by operator - not saved, no report.",
             )
             return BatchUnitReport(
                 unit=unit,
@@ -1065,7 +1065,7 @@ class TestRunnerThread(QThread):
             self._emit_log(
                 "error",
                 f"{unit.serial_number}: polarity check failed at"
-                f" {unit.position_label}: read {polarity:g} V — {reason}.",
+                f" {unit.position_label}: read {polarity:g} V - {reason}.",
             )
             record.overall_passed = False
         return passed
@@ -1250,7 +1250,7 @@ class TestRunnerThread(QThread):
                 # step with no value, and say it was the instrument.
                 self._emit_log("error", f"ERROR in {step.name}: {exc!s}")
                 self._fail_note = (
-                    f"invalid reading from the instrument ({exc.value:g}) — "
+                    f"invalid reading from the instrument ({exc.value:g}) - "
                     "check the load's front panel"
                 )
                 return False, None
@@ -1262,10 +1262,10 @@ class TestRunnerThread(QThread):
                 # remainder cannot be certified as passing.
                 self._emit_log(
                     "error",
-                    f"ERROR in {step.name}: monitoring aborted — {exc!s}",
+                    f"ERROR in {step.name}: monitoring aborted - {exc!s}",
                 )
                 self._fail_note = (
-                    f"no reading — instrument not responding ({exc.elapsed_s:.1f} s)"
+                    f"no reading - instrument not responding ({exc.elapsed_s:.1f} s)"
                 )
                 return False, None
             except Exception as exc:
@@ -1318,7 +1318,7 @@ class TestRunnerThread(QThread):
         self._emit_log(
             "error",
             f"Hardware connection failed: {last}. Retrying for up to "
-            f"{_CONNECT_RETRY_BUDGET_S:g}s — check the instrument's cable and power.",
+            f"{_CONNECT_RETRY_BUDGET_S:g}s - check the instrument's cable and power.",
         )
         while time.monotonic() < deadline and not self._stop_requested:
             attempt += 1
@@ -1335,7 +1335,7 @@ class TestRunnerThread(QThread):
             "error",
             f"Could not connect to the instrument after "
             f"{_CONNECT_RETRY_BUDGET_S:g}s ({attempt} attempts): {last}. "
-            "Aborting the run — no test data is produced. Check the cable, "
+            "Aborting the run - no test data is produced. Check the cable, "
             "power and PRODIGIT_VISA_RESOURCE, then start again.",
         )
         return False
@@ -1393,7 +1393,7 @@ class TestRunnerThread(QThread):
         except Exception as exc:
             reason = (
                 f"Could not switch the electronic load OFF{label}: {exc}. "
-                "The UUT may still be under full load — disconnect it manually "
+                "The UUT may still be under full load - disconnect it manually "
                 "and check the load's front panel."
             )
             self._emit_log("error", reason)
@@ -1556,7 +1556,7 @@ class TestRunnerThread(QThread):
             if self._current_unit is not None:
                 msg = (
                     f"[{self._current_unit.serial_number}"
-                    f" — {self._current_unit.position_label}]\n\n{msg}"
+                    f" - {self._current_unit.position_label}]\n\n{msg}"
                 )
             self.prompt_yesno_request.emit(msg)
             self._wait_for_operator(self._yesno_event)

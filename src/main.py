@@ -58,7 +58,7 @@ def main() -> int:
     except Exception as exc:
         QMessageBox.critical(
             None,
-            "DFX Tester — configuration error",
+            "DFX Tester - configuration error",
             f"The application cannot start:\n\n{exc}",
         )
         return 1

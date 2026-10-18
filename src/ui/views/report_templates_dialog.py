@@ -113,7 +113,7 @@ class _TemplateTab(QWidget):
             == QMessageBox.StandardButton.Yes
         ):
             self.editor.setPlainText(self._default_text)
-            self.status.setText("Default restored — not saved yet.")
+            self.status.setText("Default restored - not saved yet.")
 
 
 class ReportTemplatesDialog(QDialog):
@@ -138,7 +138,7 @@ class ReportTemplatesDialog(QDialog):
             description=(
                 "<b>XML report template (CAMSTAR).</b> Replace values with "
                 "<code>{{placeholders}}</code>. The empty <code>&lt;Tests/&gt;</code> "
-                "element marks where the measured results are inserted — keep it "
+                "element marks where the measured results are inserted - keep it "
                 "exactly once and leave it empty; its contents are generated from "
                 "the test script and cannot be edited here."
             ),
@@ -158,7 +158,7 @@ class ReportTemplatesDialog(QDialog):
                 "The PDF results table always uses <code>detail_columns</code>, so "
                 "the archived report keeps its measured values whoever ran the "
                 "test. <code>summary_columns</code> affects <b>CSV export only</b>, "
-                "for roles that may not view measured detail — editing it will not "
+                "for roles that may not view measured detail - editing it will not "
                 "change the PDF.<br>"
                 "The order of <code>test_sections</code> sets the order the tests "
                 "appear in <b>both</b> the PDF and the CAMSTAR XML. Keep it in spec "

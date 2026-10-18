@@ -300,7 +300,7 @@ class VersionManagerDialog(QDialog):
             return
 
         dlg = QDialog(self)
-        dlg.setWindowTitle(f"{rec['test_name']} — {rec['version_name']}")
+        dlg.setWindowTitle(f"{rec['test_name']} - {rec['version_name']}")
         dlg.resize(720, 520)
 
         layout = QVBoxLayout(dlg)

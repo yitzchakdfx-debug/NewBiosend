@@ -83,7 +83,7 @@ class _RowDesc:
 
 
 def _locked_dash() -> QTableWidgetItem:
-    it = QTableWidgetItem("—")
+    it = QTableWidgetItem("-")
     it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
     return it
 
@@ -147,7 +147,7 @@ class LimitsEditorDialog(QDialog):
         self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint)
 
         self.setWindowTitle(
-            f"Limits — {self._catalog_test_name} {self._catalog_version}".strip()
+            f"Limits - {self._catalog_test_name} {self._catalog_version}".strip()
         )
         self._apply_initial_size()
 
@@ -351,7 +351,7 @@ class LimitsEditorDialog(QDialog):
             ):
                 time_text = f" ({other.report_time} {other.report_time_uom or 'min'})"
                 break
-        return f"t{idx}{time_text} — {quantity}"
+        return f"t{idx}{time_text} - {quantity}"
 
     def _apply_row_visibility(self, show_all: bool) -> None:
         for i, row in enumerate(self._row_of):
@@ -531,7 +531,7 @@ class LimitsEditorDialog(QDialog):
         if it is None:
             return ""
         text = it.text().strip()
-        return "" if text == "—" else text
+        return "" if text == "-" else text
 
     # ------------------------------------------------------------------
     # Validation + write-back
@@ -733,7 +733,7 @@ class LimitsEditorDialog(QDialog):
             self,
             "New Version Name",
             "Enter a new unique version name\n"
-            f"(current: {self._catalog_version!r} — the selected row is preserved):",
+            f"(current: {self._catalog_version!r} - the selected row is preserved):",
             text="V1.1",
         )
         if not ok:

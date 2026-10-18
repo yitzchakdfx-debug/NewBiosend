@@ -171,6 +171,10 @@ Three consequences worth knowing:
   row. PDF only — the CSV still has one row per step. Loop headers are now
   derived from the rows' `loop` (run_meta never carried `loop_count`, so
   they were never printed).
+* **On-screen and report text uses a plain hyphen `-`** (2026-10-18), not the
+  em/en dash (`—`/`–`), at the user's request — including the "empty cell"
+  marker in the limits editor (`_locked_dash`; `_get_text` treats `-` as empty).
+  Comments and docstrings are unaffected.
 * **Every role gets measurements.** `write_pdf_report` no longer consults
   `VIEW_MEASURED_DETAIL`; Appendix A requires measured values with no role
   qualifier, and Operator lacks that capability, so production PDFs
@@ -574,9 +578,9 @@ now that point reads 4 %, the end of the 15-minute wait ~51 %.
 
 The Result column says what the unit did and what it had to meet (2026-10-18),
 for every role — the Value/Min/Max columns are hidden for some, and the reason
-used to live only in the Messages tab. Examples: `FAIL — 14.97 V (OK 22.8–25.2
-V), at 0.3 s`; `FAIL — no reading — instrument not responding (30.1 s) (OK
-22.8–25.2 V)`; `FAIL — answered Fail` (LED). The engine attaches the reason as
+used to live only in the Messages tab. Examples: `FAIL - 14.97 V (OK 22.8-25.2
+V), at 0.3 s`; `FAIL - no reading - instrument not responding (30.1 s) (OK
+22.8-25.2 V)`; `FAIL - answered Fail` (LED). The engine attaches the reason as
 the payload's optional `note` (`_fail_note`, set in `_run_step` from
 `_MonitorOutOfRange` / `_MonitorReadFailed` / a command error). Steps not
 performed after a failure carry `skipped` and show grey **N/A** instead of a red

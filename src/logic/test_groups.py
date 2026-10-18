@@ -74,10 +74,10 @@ def _time_points(steps: Iterable[TestStep]) -> list[tuple[str, str]]:
 def _detail(group: TestGroup, expected: str, is_led: bool, polarity_settle_s: float) -> str:
     """The one-line description shown under the test's name."""
     if group.is_polarity:
-        text = f"{polarity_settle_s:g} s — load OFF"
+        text = f"{polarity_settle_s:g} s - load OFF"
         return f"{text}, {expected}" if expected else text
     if is_led:
-        return f"manual — {expected}" if expected else "manual"
+        return f"manual - {expected}" if expected else "manual"
 
     parts: list[str] = []
     mode, ohms = _resistance(group.steps)
@@ -93,7 +93,7 @@ def _detail(group: TestGroup, expected: str, is_led: bool, polarity_settle_s: fl
             f"t{i} {value}{_UOM_SHORT.get(uom.strip().lower(), uom)}"
             for i, (value, uom) in enumerate(points, start=1)
         ))
-    return " — ".join(parts)
+    return " - ".join(parts)
 
 
 def build_test_groups(
