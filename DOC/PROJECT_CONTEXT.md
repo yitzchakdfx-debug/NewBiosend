@@ -162,6 +162,15 @@ Three consequences worth knowing:
   values labelled t1/t2/t3 — ahead of the full step table. The static text lives
   in the PDF template under `test_sections` so admins can edit it (§1.1.4.4
   Note 2). Test order is pinned to the spec's 1-4; unknown tests follow.
+* **"All Recorded Steps" has one row per measurement point** (2026-10-18),
+  like the on-screen results table: `_merge_point_rows` joins a point's
+  V/I/P/R steps (same loop, `report_test`, `Measurement` index) into one row
+  named "Burn-In / Continuous Load Test  t2 (15 min)", values in the Value
+  column (widened to 1.45 in), Min/Max and verdict from the limited quantity.
+  Single-reading points (polarity) and steps without a `Quantity` keep their
+  row. PDF only — the CSV still has one row per step. Loop headers are now
+  derived from the rows' `loop` (run_meta never carried `loop_count`, so
+  they were never printed).
 * **Every role gets measurements.** `write_pdf_report` no longer consults
   `VIEW_MEASURED_DETAIL`; Appendix A requires measured values with no role
   qualifier, and Operator lacks that capability, so production PDFs

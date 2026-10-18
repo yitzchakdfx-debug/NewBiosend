@@ -243,9 +243,91 @@ def _row_cells(
             cells.append(status)
         elif field == "unit":
             cells.append("" if skipped else str(row.get("unit", "")))
+        elif field == "value" and "value_text" in row:
+            # A merged measurement point: "23.6 V · 0.436 A · 11.2 W · 57.6 Ω".
+            text = "" if skipped else str(row["value_text"])
+            cells.append(Paragraph(escape(text), styles["Normal"]))
         else:  # min / max / value — blank rather than 0 for a step never run
             cells.append("" if skipped else _fmt_num(row.get(field)))
     return cells
+
+
+_QUANTITY_ORDER = {"voltage": 0, "current": 1, "power": 2, "resistance": 3}
+
+
+def _is_finite_number(v: Any) -> bool:
+    return isinstance(v, (int, float)) and math.isfinite(v)
+
+
+def _merge_point_rows(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rows for "All Recorded Steps": one per measurement point, as on screen.
+
+    The V/I/P/R steps of one point (same loop, `report_test` and `Measurement`
+    index) become one row named like the results table ("Burn-In / Continuous
+    Load Test  t2 (15 min)"), with the values joined in the Value column. Min,
+    Max and the verdict come from the limited quantity (voltage); any failing
+    member fails the row; a point whose steps were all skipped is N/A. Steps
+    without a `Quantity` (input check, LED, older scripts) and single-reading
+    points (polarity) pass through unchanged. PDF only — the CSV keeps one row per step.
+    """
+    ordered: list[dict[str, Any]] = []
+    points: dict[tuple[int, str, int], list[dict[str, Any]]] = {}
+    for row in results:
+        test = str(row.get("report_test") or "").strip()
+        if not test or not str(row.get("report_quantity") or "").strip():
+            ordered.append(row)
+            continue
+        try:
+            idx = int(row.get("report_index") or 0)
+        except (TypeError, ValueError):
+            idx = 0
+        key = (int(row.get("loop", 1) or 1), test, idx)
+        if key not in points:
+            points[key] = []
+            ordered.append({"_point": key})
+        points[key].append(row)
+
+    rows: list[dict[str, Any]] = []
+    for item in ordered:
+        key = item.get("_point")
+        if key is None:
+            rows.append(item)
+            continue
+        loop, test, idx = key
+        if len(points[key]) == 1:
+            rows.append(points[key][0])  # a lone reading (polarity) keeps its row
+            continue
+        members = sorted(
+            points[key],
+            key=lambda r: _QUANTITY_ORDER.get(str(r.get("report_quantity", "")).strip().lower(), 9),
+        )
+        name = f"{test}  t{idx or 1}"
+        timed = next((r for r in members if str(r.get("report_time", "")).strip()), None)
+        if timed is not None:
+            uom = str(timed.get("report_time_uom", "")).strip() or "min"
+            name += f" ({str(timed['report_time']).strip()} {uom})"
+        ran = [r for r in members if not r.get("skipped")]
+        values = []
+        for r in ran:
+            text = _fmt_num(r.get("value")) if r.get("is_measurement", True) else ""
+            if text:
+                unit = str(r.get("unit", "")).strip()
+                values.append(f"{text} {'Ω' if unit.lower() == 'ohm' else unit}".rstrip())
+        limited = next(
+            (r for r in ran if _is_finite_number(r.get("min")) and _is_finite_number(r.get("max"))),
+            None,
+        )
+        rows.append({
+            "test_name": name,
+            "loop": loop,
+            "value_text": " · ".join(values) or "N/A",
+            "min": limited.get("min") if limited else None,
+            "max": limited.get("max") if limited else None,
+            "unit": "",
+            "passed": all(bool(r.get("passed")) for r in ran),
+            "skipped": not ran,
+        })
+    return rows
 
 
 #: Quantities printed on an Appendix A measurement line, in spec order.
@@ -490,19 +572,31 @@ def write_pdf_report(
     headers = [label for label, _ in columns]
     # The first column absorbs the slack, so renaming or reordering columns in
     # the template cannot push the table off the page.
+    table_rows = _merge_point_rows(results)
     rest = 0.75 * inch
-    col_w = [6.35 * inch - rest * (len(headers) - 1)] + [rest] * (len(headers) - 1)
+    col_w = [rest] * len(headers)
+    if any("value_text" in r for r in table_rows):
+        # Merged points carry four values; widen Value so they wrap to two lines.
+        for i, (_, field) in enumerate(columns):
+            if i > 0 and field == "value":
+                col_w[i] = 1.45 * inch
+    col_w[0] = max(1.2 * inch, 6.35 * inch - sum(col_w[1:]))
 
     n_cols = len(headers)
-    loop_total = max(1, int(run_meta.get("loop_count", 1) or 1))
-    has_loops = loop_total > 1 and any(int(r.get("loop", 1)) > 1 for r in results)
+    # The rows themselves say how many loops ran; run_meta carries no
+    # loop_count, so reading it from there never printed the loop headers.
+    loop_total = max(
+        [int(run_meta.get("loop_count", 1) or 1)]
+        + [int(r.get("loop", 1) or 1) for r in table_rows]
+    )
+    has_loops = loop_total > 1
 
     data: list[list[Any]] = [headers]
     loop_header_rows: list[int] = []
     fail_rows: list[int] = []
     current_loop: int | None = None
 
-    for row in results:
+    for row in table_rows:
         loop_num = int(row.get("loop", 1))
         if has_loops and loop_num != current_loop:
             loop_header_rows.append(len(data))
