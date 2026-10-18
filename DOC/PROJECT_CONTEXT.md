@@ -469,6 +469,25 @@ Short-lived         ReportWorker      — builds PDF after a run
 `progress_total(int)`, `progress_test(int)`, `current_test(str)`,
 `prompt_request(str)`, `script_log(str)`, `live_reading(dict)`, `finished` (built-in)
 
+### Per-unit progress rows
+
+The control panel's status group has one row per UUT in the run (1-4, rebuilt
+by `ControlPanelWidget.show_unit_progress`). Each row is a header line —
+`CH<n>` (serial in the tooltip), the current step's short name
+(`short_step_name`: `V/I/P/R <W> <time point>`, `LED`, `Polarity`, `Setup
+300W`…; full name in the tooltip) and a clock of real time since that step
+started — over a thin, text-less progress bar. The name is deliberately *not*
+drawn inside the bar: there the fill covered it and it was unreadable on the
+station, and fixed label widths cut "CH1" to "CH". When the step has
+`Delay` commands the clock also shows their total (`MainWindow._step_delay_s`),
+because the time in a step's name is the report time point, not its duration —
+`… - 300W - 15min` waits 10 minutes. Each runner's `current_test` /
+`progress_test` drive its own unit's row; the engine also announces its
+`Input Connection Check` and `Polarity Check` gates. The rows freeze ("Done") at
+the end of the run (bar full) and stay until the next one. They replaced the shared
+"Current" field and single "Test" bar, which in a parallel run showed whichever
+unit reported last.
+
 ### Live readings pane
 
 The bottom of the main window is a `QTabWidget`: **Live Readings** (every role)

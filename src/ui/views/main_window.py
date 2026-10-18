@@ -62,7 +62,7 @@ from ui.views.select_test_dialog import SelectTestDialog
 from ui.views.test_result_dialog import TestResultDialog
 from ui.views.user_management_dialog import UserManagementDialog
 from ui.views.version_manager_dialog import VersionManagerDialog
-from ui.widgets.control_panel import ControlPanelWidget
+from ui.widgets.control_panel import ControlPanelWidget, UnitProgressRow
 from ui.widgets.result_row_delegate import ResultRowDelegate
 from version import __version__
 
@@ -370,8 +370,7 @@ class MainWindow(QMainWindow):
         self.control_panel.label_pass.setText("PASS: 0")
         self.control_panel.label_fail.setText("FAIL: 0")
         self.control_panel.progress_total.setValue(0)
-        self.control_panel.progress_test.setValue(0)
-        self.control_panel.edit_current_test.clear()
+        self.control_panel.reset_unit_progress()
 
     def _ensure_results_dir(self) -> Path:
         self._RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -754,6 +753,7 @@ class MainWindow(QMainWindow):
             QHeaderView.ResizeMode.Stretch
         )
         self._live_columns: dict[int, int] = {}  # slot_index -> table column
+        self._unit_rows: dict[int, UnitProgressRow] = {}  # slot_index -> progress row
 
         self.bottom_tabs = QTabWidget()
         self.bottom_tabs.setObjectName("bottom_tabs")
@@ -1194,6 +1194,27 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+    def _step_delay_s(self, step_name: str) -> float | None:
+        """Total `Delay` time of a step in seconds, or None if it waits for nothing.
+
+        Lets a unit's progress row show `elapsed/total`. Step names cannot be
+        used for this: "... - 300W - 15min" is the report time point, while the
+        step itself waits 10 minutes (Burn-In delays are cumulative).
+        """
+        document = self._active_document
+        step = next((s for s in document.steps if s.name == step_name), None) if document else None
+        if step is None:
+            return None
+        total_ms = 0.0
+        for cmd in step.commands:
+            args = cmd.get("args") or []
+            if str(cmd.get("cmd", "")).lower() == "delay" and args:
+                try:
+                    total_ms += float(args[0])
+                except (TypeError, ValueError):
+                    pass
+        return total_ms / 1000 if total_ms else None
+
     def _reset_live_readings(self, units: list[tuple[int, str]]) -> None:
         """Rebuild the live table with one column per (slot_index, serial), in slot order.
 
@@ -1232,14 +1253,18 @@ class MainWindow(QMainWindow):
             if item is not None:
                 item.setText(text)
 
-    def _wire_test_thread_signals(self, thread: TestRunnerThread) -> None:
-        """Connect a runner thread to the UI. Shared by production and maintenance runs."""
+    def _wire_test_thread_signals(self, thread: TestRunnerThread, row: UnitProgressRow) -> None:
+        """Connect a runner thread to the UI. Shared by production and maintenance runs.
+
+        `row` is that unit's progress row. Connected to the row's own methods
+        (not lambdas) so the queued, cross-thread delivery lands in the GUI thread.
+        """
         thread.log_msg.connect(self.append_trace)
         thread.test_result.connect(self.update_results_table)
         thread.loop_started.connect(self._on_loop_started)
         thread.progress_total.connect(self.control_panel.progress_total.setValue)
-        thread.progress_test.connect(self.control_panel.progress_test.setValue)
-        thread.current_test.connect(self.control_panel.edit_current_test.setText)
+        thread.progress_test.connect(row.set_progress)
+        thread.current_test.connect(row.on_step)
         thread.current_unit_changed.connect(self._on_current_unit_changed)
         thread.unit_finished.connect(self._on_unit_finished)
         thread.unit_alert.connect(self._on_unit_alert)
@@ -1322,10 +1347,9 @@ class MainWindow(QMainWindow):
         ):
             return
 
-
         self.results_table.setRowCount(0)
         self.control_panel.progress_total.setValue(0)
-        self.control_panel.progress_test.setValue(0)
+        rows = self.control_panel.show_unit_progress([(1, "MAINT")], self._step_delay_s)
         self.control_panel.btn_stop.setEnabled(True)
         self._clear_trace()
         self.append_trace(f"Maintenance run: {sorted(selection)}")
@@ -1347,7 +1371,7 @@ class MainWindow(QMainWindow):
             production_flow=False,
             persist_runs=False,
         )
-        self._wire_test_thread_signals(self.test_thread)
+        self._wire_test_thread_signals(self.test_thread, rows[1])
 
         try:
             DatabaseManager().log_audit_action(
@@ -1362,13 +1386,10 @@ class MainWindow(QMainWindow):
         self.test_thread.start()
 
     def _start_test_run(self, pre_meta: dict) -> None:
-
         tests_to_run = self._selected_test_names()
 
         self.results_table.setRowCount(0)
         self.control_panel.progress_total.setValue(0)
-        self.control_panel.progress_test.setValue(0)
-        self.control_panel.edit_current_test.clear()
         self.control_panel.edit_current_unit.clear()
         self.control_panel.label_pass.setText("PASS: 0")
         self.control_panel.label_fail.setText("FAIL: 0")
@@ -1387,7 +1408,9 @@ class MainWindow(QMainWindow):
         stop_on_fail = self.control_panel.chk_stop_on_fail.isChecked()
 
         batch_units = list(pre_meta["batch_units"])
-        self._reset_live_readings([(u.slot_index, u.serial_number) for u in batch_units])
+        unit_keys = [(u.slot_index, u.serial_number) for u in batch_units]
+        self._reset_live_readings(unit_keys)
+        self._unit_rows = self.control_panel.show_unit_progress(unit_keys, self._step_delay_s)
         operator = self.control_panel.edit_user_name.text().strip()
         part_number = self.control_panel.edit_part_number.text().strip()
         serial_number = batch_units[0].serial_number if batch_units else ""
@@ -1422,7 +1445,7 @@ class MainWindow(QMainWindow):
             logical_script_name=logical_script_name,
             persist_runs=self._can(Capability.ARCHIVE_RUN),
         )
-        self._wire_test_thread_signals(self.test_thread)
+        self._wire_test_thread_signals(self.test_thread, self._unit_rows[batch_units[0].slot_index])
 
         try:
             DatabaseManager().log_audit_action(
@@ -1843,10 +1866,7 @@ class MainWindow(QMainWindow):
 
         self._parallel_threads = []
         self._parallel_finished_count = 0
-        parallel_bars = self.control_panel.show_parallel_progress(
-            [u.position_label for u in batch_units]
-        )
-        for unit_idx, unit in enumerate(batch_units):
+        for unit in batch_units:
             th = TestRunnerThread(
                 self._active_script_path,
                 set(tests_to_run),
@@ -1871,8 +1891,9 @@ class MainWindow(QMainWindow):
             th.test_result.connect(self.update_results_table)
             th.loop_started.connect(self._on_loop_started)
             th.progress_total.connect(self.control_panel.progress_total.setValue)
-            th.progress_test.connect(parallel_bars[unit_idx].setValue)
-            th.current_test.connect(self.control_panel.edit_current_test.setText)
+            row = self._unit_rows[unit.slot_index]
+            th.progress_test.connect(row.set_progress)
+            th.current_test.connect(row.on_step)
             th.current_unit_changed.connect(self._on_current_unit_changed)
             th.unit_finished.connect(self._on_unit_finished)
             th.unit_alert.connect(self._on_unit_alert)
@@ -1958,7 +1979,7 @@ class MainWindow(QMainWindow):
         self._parallel_section_cursors = {}
         self._parallel_section_order = []
         self._parallel_finished_count = 0
-        self.control_panel.hide_parallel_progress()
+        self.control_panel.stop_unit_progress()
 
         self.control_panel.set_running_state(False)
         self.control_panel.edit_part_number.setReadOnly(False)
@@ -1979,6 +2000,7 @@ class MainWindow(QMainWindow):
             return
 
         self.append_trace("Sequence Complete.")
+        self.control_panel.stop_unit_progress()
 
         stopped = self._stopped_serials([th])
         nothing_tested = not th.report_snapshots()

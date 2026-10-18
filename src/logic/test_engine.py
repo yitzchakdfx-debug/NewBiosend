@@ -829,6 +829,8 @@ class TestRunnerThread(QThread):
         )
 
     def _check_input_connection(self, record: TestRunRecord, unit: BatchUnit) -> bool:
+        self.current_test.emit("Input Connection Check")
+        self.progress_test.emit(0)
         meta = getattr(self, "_script_metadata", {})
         target = _as_float(meta.get("input_target", ""), self._connected_target_v)
         tol = _as_float(meta.get("input_tol", ""), self._connected_tol_pct)
@@ -874,6 +876,10 @@ class TestRunnerThread(QThread):
         the Low Load and Burn-In tests. The driver raises rather than guessing
         when it cannot read, and that lands here as a FAIL.
         """
+        # Engine gates are not script steps, so they announce themselves for
+        # the unit's progress row (otherwise it would still read "LED").
+        self.current_test.emit("Polarity Check")
+        self.progress_test.emit(0)
         floor_v = self._polarity_floor_v()
         # §1.1.7.1 requires the readback with the load OFF, and 3 s to settle.
         # Enforced here rather than trusting a script step to have run first:

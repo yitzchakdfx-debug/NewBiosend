@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+import re
+import time
+from typing import Callable
+
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QFormLayout,
@@ -27,6 +31,148 @@ def _make_form(parent: QWidget) -> QFormLayout:
     form.setHorizontalSpacing(6)
     form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
     return form
+
+
+#: Applied in order to shorten a step name for its unit's progress row, e.g.
+#: "Voltage Measurement [V] - 300W - 15min" -> "V 300W 15m". The full name stays
+#: in the bar's tooltip.
+_SHORT_NAME_RULES: tuple[tuple[str, str], ...] = (
+    (r"^Voltage Measurement[^-]*", "V"),
+    (r"^Current Measurement[^-]*", "I"),
+    (r"^Power Measurement[^-]*", "P"),
+    (r"^Resistance Measurement[^-]*", "R"),
+    (r"^LED Indication Test$", "LED"),
+    (r"^Polarity Check$", "Polarity"),
+    (r"^Input Connection Check$", "Input 24V"),
+    (r"^(?:Low Load|Burn-In) (\d+W) Setup$", r"Setup \1"),
+    (r"\s*-\s*", " "),
+    (r"(\d+)\s*min\b", r"\1m"),
+)
+_SHORT_NAME_MAX = 16
+
+
+def short_step_name(name: str) -> str:
+    """A step name short enough to sit inside a narrow progress bar."""
+    text = name.strip()
+    for pattern, replacement in _SHORT_NAME_RULES:
+        text = re.sub(pattern, replacement, text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text if len(text) <= _SHORT_NAME_MAX else text[: _SHORT_NAME_MAX - 1] + "…"
+
+
+def _mmss(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    return f"{seconds // 60:02d}:{seconds % 60:02d}"
+
+
+class UnitProgressRow(QWidget):
+    """One UUT's current step: a header line (channel, step, timer) over a bar.
+
+    The step name sits on its own line above the bar, not inside it: drawn
+    inside, the bar's fill covered it and dark text on the fill was unreadable.
+
+    The timer shows real time since the step started, plus the step's total
+    wait when it has one (`03:20/10:00`), so the operator can tell how long is
+    left. Step names carry the report time point ("15m"), not the step's own
+    duration, which is why the total comes from the script instead.
+    """
+
+    def __init__(
+        self,
+        slot: int,
+        serial: str,
+        duration_lookup: Callable[[str], float | None] | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._duration_lookup = duration_lookup
+        self._started: float | None = None
+        self._total_s: float | None = None
+        self._done = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 2)
+        layout.setSpacing(1)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(6)
+
+        # No fixed widths: a fixed 30 px cut "CH1" to "CH" in the station's
+        # bold font. Each label takes what its font needs; the step name gets
+        # the rest of the line.
+        owner = QLabel(f"CH{slot}")
+        owner.setObjectName("unit_progress_owner")
+        owner.setToolTip(serial)
+
+        self._step = QLabel()
+        self._step.setObjectName("unit_progress_step")
+
+        self._time = QLabel()
+        self._time.setObjectName("unit_progress_time")
+        self._time.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+        header.addWidget(owner)
+        header.addWidget(self._step, stretch=1)
+        header.addWidget(self._time)
+        layout.addLayout(header)
+
+        self.bar = QProgressBar()
+        self.bar.setObjectName("unit_progress_bar")
+        self.bar.setRange(0, 100)
+        self.bar.setTextVisible(False)  # the timer says how far along it is
+        self.bar.setFixedHeight(8)
+        layout.addWidget(self.bar)
+        self.reset()
+
+    def reset(self) -> None:
+        self._started = None
+        self._done = False
+        self.bar.setValue(0)
+        self._step.setText("—")
+        self._step.setToolTip("")
+        self._time.setText("--:--")
+
+    def step_text(self) -> str:
+        """The short step name currently shown (for tests and accessibility)."""
+        return self._step.text()
+
+    def on_step(self, name: str) -> None:
+        """Slot for the runner's `current_test`; an empty name ends the run."""
+        if not name:
+            self.tick()  # record the true end time, then freeze it
+            self._started = None
+            if self._step.toolTip():
+                self._step.setText("Done")
+                self._done = True
+                self.bar.setValue(100)
+            else:
+                self._step.setText("—")
+            return
+        self._done = False
+        self._started = time.monotonic()
+        self._total_s = self._duration_lookup(name) if self._duration_lookup else None
+        self.bar.setValue(0)
+        self._step.setText(short_step_name(name))
+        self._step.setToolTip(name)
+        self.tick()
+
+    def set_progress(self, value: int) -> None:
+        """Slot for the runner's `progress_test`.
+
+        Ignored once the run is done: the runner resets progress to 0 on its way
+        out, which would leave an empty bar next to "Done".
+        """
+        if not self._done:
+            self.bar.setValue(value)
+
+    def tick(self) -> None:
+        if self._started is None:
+            return
+        text = _mmss(time.monotonic() - self._started)
+        if self._total_s:
+            text += f"/{_mmss(self._total_s)}"
+        self._time.setText(text)
 
 
 class ControlPanelWidget(QWidget):
@@ -99,33 +245,30 @@ class ControlPanelWidget(QWidget):
         status_form.setLabelAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
-        self.edit_current_test = QLineEdit()
-        self.edit_current_test.setReadOnly(True)
-        self.edit_current_test.setPlaceholderText("—")
-        status_form.addRow("Current", self.edit_current_test)
-
         self.edit_current_unit = QLineEdit()
         self.edit_current_unit.setReadOnly(True)
         self.edit_current_unit.setPlaceholderText("—")
         status_form.addRow("Unit", self.edit_current_unit)
-
-        self.progress_test = QProgressBar()
-        self.progress_test.setMaximumHeight(16)
-        status_form.addRow("Test", self.progress_test)
-        self._status_form = status_form
 
         self.progress_total = QProgressBar()
         self.progress_total.setMaximumHeight(16)
         status_form.addRow("Total", self.progress_total)
         status_layout.addLayout(status_form)
 
-        # Container for per-unit bars shown in parallel mode (hidden by default)
-        self._parallel_bars_container = QWidget()
-        self._parallel_bars_container.setVisible(False)
-        self._parallel_bars_layout = QVBoxLayout(self._parallel_bars_container)
-        self._parallel_bars_layout.setContentsMargins(0, 0, 0, 0)
-        self._parallel_bars_layout.setSpacing(2)
-        status_layout.addWidget(self._parallel_bars_container)
+        # One row per UUT in the run (see `UnitProgressRow`), rebuilt by
+        # `show_unit_progress` at each run start. Replaces the former shared
+        # "Current" field and single "Test" bar, which in a parallel run showed
+        # whichever unit happened to report last.
+        self._unit_rows: list[UnitProgressRow] = []
+        self._unit_rows_layout = QVBoxLayout()
+        self._unit_rows_layout.setContentsMargins(0, 0, 0, 0)
+        self._unit_rows_layout.setSpacing(2)
+        status_layout.addLayout(self._unit_rows_layout)
+        self._tick_timer = QTimer(self)
+        # Several ticks per second: the timer is not aligned to step starts, so
+        # a 1 s tick could show a step's clock up to a second behind.
+        self._tick_timer.setInterval(250)
+        self._tick_timer.timeout.connect(self._tick_rows)
 
         counters = QHBoxLayout()
         counters.setSpacing(4)
@@ -171,46 +314,45 @@ class ControlPanelWidget(QWidget):
         if not running:
             self.btn_start.setText("Start")
 
-    def show_parallel_progress(self, position_labels: list[str]) -> list[QProgressBar]:
-        """Switch to per-unit progress bars for parallel mode. Returns the bar list."""
-        label_widget = self._status_form.labelForField(self.progress_test)
-        if label_widget:
-            label_widget.setVisible(False)
-        self.progress_test.setVisible(False)
+    def show_unit_progress(
+        self,
+        units: list[tuple[int, str]],
+        duration_lookup: Callable[[str], float | None] | None = None,
+    ) -> dict[int, UnitProgressRow]:
+        """Rebuild one progress row per (slot_index, serial), in slot order.
 
-        while self._parallel_bars_layout.count():
-            item = self._parallel_bars_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        Returns the rows keyed by slot so each runner thread can be wired to its
+        own unit's row. `duration_lookup(step_name)` gives a step's total wait.
+        """
+        while self._unit_rows_layout.count():
+            item = self._unit_rows_layout.takeAt(0)
+            old = item.widget()
+            if old is not None:
+                # Hidden at once: until the deferred delete runs, a widget taken
+                # out of the layout is still a visible child and paints at (0,0).
+                old.hide()
+                old.deleteLater()
+        self._unit_rows = []
+        rows: dict[int, UnitProgressRow] = {}
+        for slot, serial in sorted(units):
+            row = UnitProgressRow(slot, serial, duration_lookup, parent=self)
+            self._unit_rows_layout.addWidget(row)
+            self._unit_rows.append(row)
+            rows[slot] = row
+        self._tick_timer.start()
+        return rows
 
-        bars: list[QProgressBar] = []
-        for lbl_text in position_labels:
-            row_w = QWidget()
-            row_l = QHBoxLayout(row_w)
-            row_l.setContentsMargins(0, 0, 0, 0)
-            row_l.setSpacing(4)
-            lbl = QLabel(f"{lbl_text}:")
-            lbl.setFixedWidth(100)
-            bar = QProgressBar()
-            bar.setRange(0, 100)
-            bar.setValue(0)
-            bar.setMaximumHeight(14)
-            row_l.addWidget(lbl)
-            row_l.addWidget(bar)
-            self._parallel_bars_layout.addWidget(row_w)
-            bars.append(bar)
+    def stop_unit_progress(self) -> None:
+        """Freeze the rows at their final state; they stay until the next run."""
+        self._tick_timer.stop()
 
-        self._parallel_bars_container.setVisible(True)
-        return bars
+    def reset_unit_progress(self) -> None:
+        for row in self._unit_rows:
+            row.reset()
 
-    def hide_parallel_progress(self) -> None:
-        """Restore the single test progress bar."""
-        self._parallel_bars_container.setVisible(False)
-        label_widget = self._status_form.labelForField(self.progress_test)
-        if label_widget:
-            label_widget.setVisible(True)
-        self.progress_test.setVisible(True)
-        self.progress_test.setValue(0)
+    def _tick_rows(self) -> None:
+        for row in self._unit_rows:
+            row.tick()
 
     def take_user_box(self) -> QGroupBox:
         """Detach the User QGroupBox so MainWindow can re-parent it into the left sidebar.
