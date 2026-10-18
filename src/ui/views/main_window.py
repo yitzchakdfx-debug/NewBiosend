@@ -1000,16 +1000,16 @@ class MainWindow(QMainWindow):
         # The PDF archived but the CAMSTAR XML did not. Surfaced separately and
         # prominently: the run looks complete, yet MES has nothing to ingest.
         worker.xml_failed.connect(self._on_xml_report_failed)
+        # A bound method, not a lambda: it is queued to the GUI thread reliably.
+        # The lambda this replaces could miss, leaving a deleted worker in the
+        # list — closing the app then crashed in _shutdown_threads.
+        worker.finished.connect(self._prune_report_workers)
         worker.finished.connect(worker.deleteLater)
-        worker.finished.connect(lambda w=worker: self._forget_report_worker(w))
         worker.start()
 
-    def _forget_report_worker(self, worker: ReportWorker) -> None:
-        """Drop a finished worker from the keep-alive list."""
-        try:
-            self._report_workers.remove(worker)
-        except ValueError:
-            pass
+    def _prune_report_workers(self) -> None:
+        """Drop workers that have finished, or whose C++ object is already gone."""
+        self._report_workers = [w for w in self._report_workers if self._is_running(w)]
 
     def load_script(self) -> None:
         """Load a test from the database catalog (temp file) for every role."""
@@ -1700,23 +1700,28 @@ class MainWindow(QMainWindow):
             self.append_trace("Stopping sequence...")
 
     def _shutdown_threads(self) -> None:
-        for th in list(self._parallel_threads):
-            if self._is_running(th):
-                th.stop()
-                th.wait(5000)
-        if self._is_running(self.test_thread):
-            self.test_thread.stop()
-            if not self.test_thread.wait(5000):
-                self.append_trace("Warning: test thread did not stop within 5s.")
-        # Wait on every outstanding worker, not just the most recent: a parallel
-        # run has one per UUT, and closing while one is mid-write would truncate
-        # that unit's report.
-        for worker in list(self._report_workers):
-            if worker.isRunning() and not worker.wait(5000):
-                self.append_trace(
-                    "Warning: a report worker did not finish within 5s."
-                )
-        self._release_load_on_exit()
+        # try/finally: the exit load-off must run whatever goes wrong above.
+        # A stale (deleted) report worker once raised here, and the close then
+        # skipped _release_load_on_exit entirely.
+        try:
+            for th in list(self._parallel_threads):
+                if self._is_running(th):
+                    th.stop()
+                    th.wait(5000)
+            if self._is_running(self.test_thread):
+                self.test_thread.stop()
+                if not self.test_thread.wait(5000):
+                    self.append_trace("Warning: test thread did not stop within 5s.")
+            # Wait on every outstanding worker, not just the most recent: a
+            # parallel run has one per UUT, and closing while one is mid-write
+            # would truncate that unit's report.
+            for worker in list(self._report_workers):
+                if self._is_running(worker) and not worker.wait(5000):
+                    self.append_trace(
+                        "Warning: a report worker did not finish within 5s."
+                    )
+        finally:
+            self._release_load_on_exit()
 
     def _release_load_on_exit(self) -> None:
         """Last-chance load shutdown when the app is closing.

@@ -705,6 +705,13 @@ nothing (seen on the station). Threads are now deleted together at the end of
 `_on_parallel_thread_finished`, and `MainWindow._is_running()` (shiboken6
 validity check) guards every Stop / shutdown / close check.
 
+**The exit load-off always runs** (2026-10-18). Closing the app once raised in
+`_shutdown_threads` on a report worker that had finished and been deleted but
+was still in `_report_workers` (it was removed by a lambda slot, which could
+miss), and the close then skipped `_release_load_on_exit`. Workers are now pruned
+by a bound method (`_prune_report_workers`), checked with `_is_running`, and
+`_shutdown_threads` runs the exit load-off in a `finally`.
+
 `should_generate_report` is a different, older flag: it is set on the up-front
 polarity failure path but `_finalize_run_reports` never reads it, so that path
 still archives a report despite logging "Skipping report". Left as is pending a
