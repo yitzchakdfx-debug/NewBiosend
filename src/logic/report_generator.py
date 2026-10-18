@@ -38,7 +38,7 @@ from logic.report_xml import (
     template_values,
     tree_to_text,
 )
-from logic.roles import Capability, can
+from logic.roles import Capability, can, role_label
 from paths import user_data_path
 
 class ReportsForbiddenError(PermissionError):
@@ -181,7 +181,7 @@ def _fmt_num(v: Any) -> str:
 def _header_rows(run_meta: dict[str, Any], role: str) -> list[tuple[str, str]]:
     """Header label/value pairs, ordered and selected by the PDF template."""
     values = template_values(run_meta)
-    values["role"] = role
+    values["role"] = role_label(role)  # the spec's name, e.g. "Technician (Operator)"
     # The PDF has always shown channel as "CH1 / SN"; the XML uses the bare SN.
     load_ch = str(run_meta.get("load_serial_number", "")).strip()
     if run_meta.get("load_channel"):
@@ -477,7 +477,7 @@ def write_pdf_report(
     # 2.1.3.4 require the Measured Output Value on Tests 2/3/4 with no role
     # qualifier, so the archived PDF always carries the numbers. This used to
     # select the column list from `Capability.VIEW_MEASURED_DETAIL`, which
-    # Operator and Technician lack — meaning a normal production run archived a
+    # Operator lacks — meaning a normal production run archived a
     # PDF of test names and PASS/FAIL with no measurements at all. The
     # capability still gates the live results table and trace log in the UI;
     # what the permanent record must contain is a separate question.

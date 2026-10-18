@@ -23,7 +23,8 @@ full plan to a Markdown file** in the repo.
 
 - PySide6 desktop ATE app; entry point `src/main.py`. Source under `src/`
   (`logic/`, `drivers/`, `ui/`, `data/`).
-- Roles are **Operator / Technician / Maintenance / Admin** (not "Engineer"),
+- Roles are **Operator / Maintenance / Admin** (not "Engineer"); Operator is
+  shown as "Technician (Operator)" per spec (stored value stays `Operator`),
   defined once in `src/logic/roles.py`. Gate behaviour on a `Capability` from
   that module, never on a role-name comparison. Maintenance may run individual
   steps out of sequence but **must not** generate reports or archive runs

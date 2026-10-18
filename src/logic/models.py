@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, NotRequired, TypedDict
 
-from logic.roles import ALL_ROLES
+from logic.roles import ALL_ROLES, coerce_role
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,7 +108,10 @@ def normalize_role(raw: str) -> str:
     Raises ValueError for unknown roles so callers get a single consistent
     error message without duplicating the role list.
     """
-    normalized = raw.strip().title()
+    # coerce_role also maps the retired "Technician" and the on-screen label
+    # "Technician (Operator)" to the stored value "Operator".
+    resolved = coerce_role(raw)
+    normalized = resolved.value if resolved is not None else raw.strip().title()
     if normalized not in _VALID_ROLES:
         raise ValueError(
             f"Invalid role {raw!r}. Expected one of: {', '.join(sorted(_VALID_ROLES))}"
@@ -151,7 +154,7 @@ class BatchUnitReport:
     #: The operator pressed Stop before this unit's tests finished. Such a run is
     #: neither saved to the database nor reported (it is not a unit failure).
     aborted_by_operator: bool = False
-    #: Steps actually run vs. steps the script defines. A Technician may untick
+    #: Steps actually run vs. steps the script defines. Maintenance/Admin may untick
     #: steps before a run (`Capability.SELECT_STEPS`), and deselected steps are
     #: filtered out before execution — so unlike a step skipped *after* a
     #: failure they leave no N/A row and would otherwise be invisible. Spec

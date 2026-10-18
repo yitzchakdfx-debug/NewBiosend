@@ -7,6 +7,8 @@ import time
 from typing import Callable
 
 from PySide6.QtCore import Qt, QTimer, Signal
+
+from logic.roles import role_label
 from PySide6.QtWidgets import (
     QCheckBox,
     QFormLayout,
@@ -215,7 +217,7 @@ class ControlPanelWidget(QWidget):
         user_form.addRow("Name", self.edit_user_name)
         self.edit_user_level = QLineEdit()
         self.edit_user_level.setReadOnly(True)
-        self.edit_user_level.setText(str(user_info.get("role", "")))
+        self.edit_user_level.setText(role_label(str(user_info.get("role", ""))))
         user_form.addRow("Level", self.edit_user_level)
         root.addWidget(self.user_box)
 

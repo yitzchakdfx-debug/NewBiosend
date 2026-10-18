@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 
 from logic.auth_manager import AuthManager
 from logic.database_manager import DatabaseManager
-from logic.roles import ALL_ROLES
+from logic.roles import ALL_ROLES, ROLE_LABELS, coerce_role, role_label
 from ui.ui_helpers import attach_password_visibility_toggle
 
 
@@ -58,10 +58,14 @@ class UserEditDialog(QDialog):
         self._edit_employee_id.setText(employee_id)
         form.addRow("Employee ID", self._edit_employee_id)
 
+        # Shows the spec's names ("Technician (Operator)") but stores the role
+        # value ("Operator") as item data.
         self._combo_role = QComboBox()
-        self._combo_role.addItems(list(self._ROLES))
+        for value in self._ROLES:
+            self._combo_role.addItem(ROLE_LABELS.get(value, value), value)
         if role:
-            idx = self._combo_role.findText(role)
+            resolved = coerce_role(role)
+            idx = self._combo_role.findData(resolved.value if resolved else role)
             self._combo_role.setCurrentIndex(max(0, idx))
         form.addRow("Role", self._combo_role)
 
@@ -102,7 +106,7 @@ class UserEditDialog(QDialog):
 
         pwd = self._pwd.text()
         confirm = self._pwd_confirm.text()
-        role = self._combo_role.currentText()
+        role = str(self._combo_role.currentData() or self._combo_role.currentText())
         eid = self._edit_employee_id.text().strip()
 
         if self._mode == "add":
@@ -199,7 +203,7 @@ class UserManagementDialog(QDialog):
             r = self._table.rowCount()
             self._table.insertRow(r)
             self._table.setItem(r, 0, QTableWidgetItem(str(user["username"])))
-            self._table.setItem(r, 1, QTableWidgetItem(str(user["role"])))
+            self._table.setItem(r, 1, QTableWidgetItem(role_label(str(user["role"]))))
             self._table.setItem(r, 2, QTableWidgetItem(str(user.get("employee_id", ""))))
 
     def _add_user(self) -> None:

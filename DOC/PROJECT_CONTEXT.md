@@ -100,8 +100,13 @@ src/
 
 ## Roles (RBAC)
 
-Four roles — **Operator / Technician / Maintenance / Admin** — defined once in
-`logic/roles.py`. `ALL_ROLES` feeds both the DB `CHECK` constraint and the
+Three roles, as in spec Rev.1.1 §1.1.4.3 — **Operator / Maintenance / Admin** —
+defined once in `logic/roles.py`. Operator is the spec's "Technician (Operator)":
+the database stores `Operator` and the UI and PDF show `role_label()` →
+"Technician (Operator)" (`ROLE_LABELS`). A separate Technician role (which could
+untick tests) existed until 2026-10-18; `schema._merge_retired_roles()` converts
+such users to `Operator` before the CHECK rebuild, and `coerce_role()` still
+accepts the old name and the label. `ALL_ROLES` feeds both the DB `CHECK` constraint and the
 user-management combo box; the DB CHECK is widened by `_migrate_role_check()`
 when a role is added.
 
@@ -110,18 +115,18 @@ is the only permission predicate in the UI; `logic/report_generator.py` enforces
 report permission independently so the ban cannot be bypassed by a background
 worker.
 
-| Capability | Operator | Technician | Maintenance | Admin |
-|---|---|---|---|---|
-| `RUN_SEQUENCE` | ✓ | ✓ | ✓ | ✓ |
-| `RUN_SINGLE_STEP` | ✗ | ✗ | ✓ | ✓ |
-| `SELECT_STEPS` | ✗ | ✓ | ✓ | ✓ |
-| `GENERATE_REPORTS` / `ARCHIVE_RUN` | ✓ | ✓ | **✗** | ✓ |
-| `VIEW_MEASURED_DETAIL` / `VIEW_TRACE_LOG` | ✗ | ✗ | ✓ | ✓ |
-| `EDIT_LIMITS` / `EDIT_TEMPLATES` | ✗ | ✗ | ✗ | ✓ |
-| `MANAGE_VERSIONS` / `MANAGE_USERS` | ✗ | ✗ | ✗ | ✓ |
-| `VIEW_AUDIT_LOG` / `EDIT_CONNECTIONS` | ✗ | ✗ | ✗ | ✓ |
+| Capability | Operator ("Technician (Operator)") | Maintenance | Admin |
+|---|---|---|---|
+| `RUN_SEQUENCE` | ✓ | ✓ | ✓ |
+| `RUN_SINGLE_STEP` | ✗ | ✓ | ✓ |
+| `SELECT_STEPS` | ✗ | ✓ | ✓ |
+| `GENERATE_REPORTS` / `ARCHIVE_RUN` | ✓ | **✗** | ✓ |
+| `VIEW_MEASURED_DETAIL` / `VIEW_TRACE_LOG` | ✗ | ✓ | ✓ |
+| `EDIT_LIMITS` / `EDIT_TEMPLATES` | ✗ | ✗ | ✓ |
+| `MANAGE_VERSIONS` / `MANAGE_USERS` | ✗ | ✗ | ✓ |
+| `VIEW_AUDIT_LOG` / `EDIT_CONNECTIONS` | ✗ | ✗ | ✓ |
 
-Maintenance is **not** a superset of Technician. Per spec Rev.1.1 §1.1.4.3 it
+Maintenance is **not** a superset of Operator. Per spec Rev.1.1 §1.1.4.3 it
 gains diagnostic access (single-step execution, measured detail, trace) but
 loses report generation and run archiving, so bench troubleshooting cannot
 leave behind something that looks like a production record. A maintenance run
@@ -159,7 +164,7 @@ Three consequences worth knowing:
   Note 2). Test order is pinned to the spec's 1-4; unknown tests follow.
 * **Every role gets measurements.** `write_pdf_report` no longer consults
   `VIEW_MEASURED_DETAIL`; Appendix A requires measured values with no role
-  qualifier, and Operator/Technician lack that capability, so production PDFs
+  qualifier, and Operator lacks that capability, so production PDFs
   used to archive names and PASS/FAIL only. The capability still gates the live
   UI table and trace log.
 
@@ -439,7 +444,7 @@ test_results    id, run_id FK→test_runs, test_name, value,
                 min_val, max_val, unit, passed
 
 users           id, username (UNIQUE NOCASE), password_hash, salt,
-                role CHECK(Operator/Technician/Admin),
+                role CHECK(Operator/Maintenance/Admin),
                 employee_id, created_at, updated_at
 
 test_versions   id, test_name, uut_type, version_name, test_content,
@@ -523,9 +528,9 @@ skipping one would shorten the burn-in and mislabel later time points. Maintenan
 `_check_polarity`. Rows are measured by `WrapItemDelegate` so wrapped detail
 lines are not cut.
 
-The LED row stays uncheckable by roles holding `SELECT_STEPS` (Technician,
-Maintenance, Admin) — a deliberate decision of 2026-10-18, pending the
-customer's answer on Technician privileges. A run without it skips the
+The LED row stays uncheckable by roles holding `SELECT_STEPS` (Maintenance,
+Admin) — a deliberate decision of 2026-10-18. Since the roles merge the Operator
+cannot untick any row. A run without it skips the
 pre-test "LED ON" column, omits LED from the report, and is disclosed as a
 partial run. Do not lock it without revisiting that decision.
 
@@ -762,7 +767,8 @@ skipping teardown does not leak it.
 3. **No secrets in source** — everything in `.env`
 4. **All SQL in `logic/db/`** — no `sqlite3` imports anywhere else
 5. **No inline styles** — use objectName + `.qss` selectors; never `setStyleSheet("...")`
-6. **Roles are Operator / Technician / Maintenance / Admin** — not "Engineer";
+6. **Roles are Operator / Maintenance / Admin** (Operator shown as "Technician
+   (Operator)") — not "Engineer";
    gate on a `Capability` from `logic/roles.py`, never on a role-name compare
 7. **`serialize_ordered_steps` must round-trip every parsed step field** — an
    omitted field is destroyed on the first limits-editor save (this once deleted

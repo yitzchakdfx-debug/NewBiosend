@@ -17,10 +17,15 @@ from enum import Enum
 
 
 class Role(str, Enum):
-    """A user privilege level. The value is what is stored in the database."""
+    """A user privilege level. The value is what is stored in the database.
+
+    Spec Rev.1.1 §1.1.4.3 defines three levels. Its "Technician (Operator)" is
+    one role, stored as "Operator" and shown under the spec's name (see
+    `ROLE_LABELS`). A separate Technician role existed until 2026-10-18 and
+    could untick tests — a modification privilege the spec does not grant.
+    """
 
     OPERATOR = "Operator"
-    TECHNICIAN = "Technician"
     MAINTENANCE = "Maintenance"
     ADMIN = "Admin"
 
@@ -28,6 +33,28 @@ class Role(str, Enum):
 #: Every valid role value, in ascending order of privilege. This is the list
 #: the DB CHECK constraint and the user-management combo box are built from.
 ALL_ROLES: tuple[str, ...] = tuple(r.value for r in Role)
+
+#: How each role is named on screen and in reports — the spec's wording. The
+#: stored value stays a plain word: the DB CHECK constraint only admits letters
+#: and spaces (`schema._role_check_sql`), and it keeps export filenames clean.
+ROLE_LABELS: dict[str, str] = {
+    Role.OPERATOR.value: "Technician (Operator)",
+    Role.MAINTENANCE.value: "Maintenance",
+    Role.ADMIN.value: "Admin",
+}
+
+#: Names accepted from older databases or typed by hand, mapped to the stored
+#: role. "Technician" is the retired role, merged into Operator.
+_LEGACY_ALIASES: dict[str, Role] = {
+    "technician": Role.OPERATOR,
+    "technician (operator)": Role.OPERATOR,
+}
+
+
+def role_label(role: str) -> str:
+    """The display name for a stored role value ("Operator" -> "Technician (Operator)")."""
+    resolved = coerce_role(role)
+    return ROLE_LABELS[resolved.value] if resolved is not None else str(role)
 
 
 class Capability(str, Enum):
@@ -60,9 +87,7 @@ _OPERATOR: frozenset[Capability] = frozenset(
     }
 )
 
-_TECHNICIAN: frozenset[Capability] = _OPERATOR | {Capability.SELECT_STEPS}
-
-# Maintenance is deliberately NOT a superset of Technician. Spec Rev.1.1
+# Maintenance is deliberately NOT a superset of Operator. Spec Rev.1.1
 # §1.1.4.3: it may run individual scenarios outside the production flow, and
 # "Test reports shall not be generated in this mode" — so it gains diagnostic
 # visibility but loses report generation and run archiving. Without that, bench
@@ -81,16 +106,23 @@ _ADMIN: frozenset[Capability] = frozenset(Capability)
 
 _MATRIX: dict[Role, frozenset[Capability]] = {
     Role.OPERATOR: _OPERATOR,
-    Role.TECHNICIAN: _TECHNICIAN,
     Role.MAINTENANCE: _MAINTENANCE,
     Role.ADMIN: _ADMIN,
 }
 
 
 def coerce_role(raw: str) -> Role | None:
-    """Return the `Role` for `raw` (case-insensitive), or None if unknown."""
+    """Return the `Role` for `raw` (case-insensitive), or None if unknown.
+
+    Accepts the retired "Technician" and the "Technician (Operator)" label as
+    Operator, so a user not yet migrated is never locked out.
+    """
+    text = str(raw).strip()
+    alias = _LEGACY_ALIASES.get(text.lower())
+    if alias is not None:
+        return alias
     try:
-        return Role(str(raw).strip().title())
+        return Role(text.title())
     except ValueError:
         return None
 

@@ -141,8 +141,27 @@ def _current_role_check_values(conn: sqlite3.Connection) -> set[str] | None:
     return {value.strip().strip("'\"") for value in match.group(1).split(",") if value.strip()}
 
 
+#: Retired role values and the role they were merged into. Applied after the
+#: backup and before the CHECK rebuild below, which copies every row into a
+#: table that no longer admits the retired value and would otherwise fail (and
+#: stop the app starting).
+_RETIRED_ROLES: dict[str, str] = {
+    # Spec Rev.1.1 §1.1.4.3 has one "Technician (Operator)" level (2026-10-18).
+    "Technician": "Operator",
+}
+
+
+def _merge_retired_roles(conn: sqlite3.Connection) -> None:
+    """Move users holding a retired role to the role that replaced it."""
+    for old, new in _RETIRED_ROLES.items():
+        conn.execute(
+            "UPDATE users SET role = ? WHERE role = ? COLLATE NOCASE;", (new, old)
+        )
+    conn.commit()
+
+
 def _migrate_role_check(conn: sqlite3.Connection, db_path) -> None:
-    """Widen the `users.role` CHECK constraint to the current role list.
+    """Rebuild the `users.role` CHECK constraint to match the current role list.
 
     `CREATE TABLE IF NOT EXISTS` never revisits an existing table, so a database
     created before a role was added keeps the old CHECK forever and rejects the
@@ -151,14 +170,20 @@ def _migrate_role_check(conn: sqlite3.Connection, db_path) -> None:
     migration that drops and recreates a table holding credentials.
     """
     allowed = _current_role_check_values(conn)
-    if allowed is None or allowed == set(ALL_ROLES):
-        return  # no CHECK to widen, or already current
+    if allowed is None:
+        _merge_retired_roles(conn)  # no CHECK to rebuild; still retire old roles
+        return
+    if allowed == set(ALL_ROLES):
+        return  # already current
 
     backup = db_path.with_name(
         f"{db_path.name}.bak-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     )
     conn.commit()
     shutil.copy2(db_path, backup)
+    # After the backup, so it keeps the original roles. Rows still holding a
+    # retired role would make the INSERT ... SELECT below fail the new CHECK.
+    _merge_retired_roles(conn)
 
     columns = ", ".join(_USER_COLUMNS)
     # Foreign keys must be toggled outside a transaction for the pragma to take
