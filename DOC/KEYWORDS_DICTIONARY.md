@@ -120,8 +120,7 @@ Before a version is stored (Version Manager Edit / Import / Update from .tst),
 `ScriptManager.check_text` parses the script and checks every command against
 `logic.script_manager.KNOWN_COMMANDS` (the Prodigit driver's commands plus the
 engine's `delay`, `log`, `prompt`, `promptyesno`). A parse error blocks the
-save; an unknown command, or a `Report` test missing from the PDF template's
-`test_sections`, is a warning the Admin must confirm. A new driver or engine
+save; an unknown command is a warning the Admin must confirm. A new driver or engine
 command must be added to `KNOWN_COMMANDS` too.
 
 ## Worked example

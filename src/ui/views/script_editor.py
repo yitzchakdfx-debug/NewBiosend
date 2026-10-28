@@ -30,13 +30,7 @@ def confirm_script(parent: QWidget | None, script_manager: ScriptManager, text: 
     A version that does not parse is refused: it would fail when selected, and
     at the next startup, which opens on the newest version.
     """
-    try:
-        from logic.report_templates import read_pdf_template
-
-        sections = list(read_pdf_template().get("test_sections") or {})
-    except Exception:
-        sections = []
-    error, warnings = script_manager.check_text(text, sections)
+    error, warnings = script_manager.check_text(text)
     if error:
         QMessageBox.warning(
             parent,

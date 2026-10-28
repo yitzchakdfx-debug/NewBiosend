@@ -164,13 +164,12 @@ class ScriptManager:
         self._validate_report_directives(steps)
         return ScriptDocument(metadata=metadata, steps=steps)
 
-    def check_text(self, text: str, report_sections: list[str]) -> tuple[str | None, list[str]]:
+    def check_text(self, text: str) -> tuple[str | None, list[str]]:
         """Check a script before it is stored: (blocking error or None, warnings).
 
         The error is what `parse_text` would raise when the version is selected
-        (or loaded at startup). Warnings are things that parse but go wrong
-        later: a command no driver knows (fails mid-run) and a `Report` test the
-        PDF template does not list (`report_sections`; empty = not checked).
+        (or loaded at startup). Warnings are commands no driver knows: they
+        parse, but fail mid-run.
         """
         try:
             document = self.parse_text(text)
@@ -186,16 +185,6 @@ class ScriptManager:
                     warnings.append(
                         f"Step '{step.name}': unknown command '{name}' - it will fail during the run."
                     )
-        if report_sections:
-            missing: list[str] = []
-            for step in document.steps:
-                if step.report_test and step.report_test not in report_sections and step.report_test not in missing:
-                    missing.append(step.report_test)
-            for name in missing:
-                warnings.append(
-                    f"Report test '{name}' is not in the PDF template (Report Templates > "
-                    "test_sections): it will be printed last, with no Expected line."
-                )
         return None, warnings
 
     @staticmethod
