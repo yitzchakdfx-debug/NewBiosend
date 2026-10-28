@@ -42,6 +42,10 @@ BACKEND_SETTING_KEY = "__hardware_backend__"
 #: overwrite the dedicated field's value.
 LOAD_RESOURCE_KEY = "__load_visa_resource__"
 
+#: Admin-chosen report folders (see `logic.report_paths`). Empty = default.
+RESULTS_DIR_KEY = "__results_dir__"
+XML_DIR_KEY = "__xml_dir__"
+
 
 def _stored_settings() -> dict[str, str]:
     """Admin overrides from the database, or {} if it cannot be read.

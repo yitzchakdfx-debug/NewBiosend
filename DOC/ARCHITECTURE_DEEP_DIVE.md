@@ -162,7 +162,7 @@ DFX_ate persists in three places, split by purpose:
 | Test sequences (authored)      | Plain text     | `data/*.tst` (seed) + DB catalog  |
 | Test-version catalog & history | SQLite         | `data/database.db`                |
 | Encrypted system/hardware logs | Fernet `.dat`  | `data/logs/sys_YYYYMMDD.dat`      |
-| Archived reports               | PDF (+ CSV)    | `data/results/<UUT>/<Serial>/`    |
+| Archived reports               | PDF (+ CSV)    | `data/results/<UUT>/<Serial>_<dd-mm-yyyy>_<HHhMMmSSs>/`    |
 | Spec limits (legacy)           | JSON           | `data/limits.json` **(unused)**   |
 
 ### 2.1 Script engine
@@ -282,7 +282,7 @@ top-right `BirdLogo.png` watermark merged via PyPDF2) and CSV. Detail is
 role-gated: **Admin** reports include Min/Max/Value/Unit; other roles get
 Test Name + Result only. Admin PDFs are encrypted with `config.ADMIN_REPORT_PASSWORD`
 (sourced from `.env`; key `ADMIN_REPORT_PASSWORD`). At end of run the report
-auto-archives to `data/results/<UUT>/<Serial>/` when the (Admin-only) "Save as
+auto-archives to `data/results/<UUT>/<Serial>_<dd-mm-yyyy>_<HHhMMmSSs>/` when the (Admin-only) "Save as
 log" box is checked — the build runs in `ReportWorker` (off the GUI thread).
 CSV/PDF can also be exported manually from the Results menu (synchronous, on the
 GUI thread, user-initiated).

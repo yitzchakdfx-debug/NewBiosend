@@ -2,20 +2,28 @@
 
 from __future__ import annotations
 
+import uuid
+from pathlib import Path
+
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
     QFrame,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
+    QPushButton,
     QVBoxLayout,
+    QWidget,
 )
 
 from config import HARDWARE_BACKEND, INSTRUMENTS, PRODIGIT_VISA_RESOURCE
-from drivers.factory import BACKEND_SETTING_KEY, LOAD_RESOURCE_KEY
+from drivers.factory import BACKEND_SETTING_KEY, LOAD_RESOURCE_KEY, RESULTS_DIR_KEY, XML_DIR_KEY
+from logic import report_paths
 from logic.database_manager import DatabaseManager
 
 #: Label shown to the admin -> value stored. An empty stored value means "no
@@ -101,6 +109,39 @@ class ConnectionsDialog(QDialog):
         line.setFrameShadow(QFrame.Shadow.Sunken)
         root.addWidget(line)
 
+        # --- Report folders ------------------------------------------------------
+        # Applied to the next report (no restart). A network share works; a UNC
+        # path is preferred, as a mapped drive letter may not exist for every
+        # session. If the folder is unreachable when a report is written, the
+        # report is saved locally and the operator is told (ReportGenerator).
+        root.addWidget(QLabel("<b>Reports</b>"))
+        reports_form = QFormLayout()
+        reports_form.setContentsMargins(0, 4, 0, 4)
+        reports_form.setHorizontalSpacing(12)
+        self._initial_results = stored_settings.get(RESULTS_DIR_KEY, "").strip()
+        self._initial_xml = stored_settings.get(XML_DIR_KEY, "").strip()
+        self._edit_results = QLineEdit(self._initial_results)
+        self._edit_results.setObjectName("conn_results_dir")
+        self._edit_results.setPlaceholderText(f"blank = {report_paths.local_results_dir()}")
+        self._edit_xml = QLineEdit(self._initial_xml)
+        self._edit_xml.setObjectName("conn_xml_dir")
+        self._edit_xml.setPlaceholderText("blank = <reports folder>\\XML  (or XML_EXPORT_DIR in .env)")
+        reports_form.addRow("Reports folder", self._folder_row(self._edit_results))
+        reports_form.addRow("XML folder (copy of every XML)", self._folder_row(self._edit_xml))
+        root.addLayout(reports_form)
+        reports_note = QLabel(
+            "Takes effect on the next report. For a shared network folder prefer a "
+            "path like \\\\server\\share\\reports. If it is unreachable when a "
+            "report is written, the report is saved locally and you are told."
+        )
+        reports_note.setWordWrap(True)
+        root.addWidget(reports_note)
+
+        line2 = QFrame()
+        line2.setFrameShape(QFrame.Shape.HLine)
+        line2.setFrameShadow(QFrame.Shadow.Sunken)
+        root.addWidget(line2)
+
         # --- Per-instrument connection strings --------------------------------
         root.addWidget(QLabel("<b>Other instruments</b>"))
         root.addWidget(
@@ -131,6 +172,38 @@ class ConnectionsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
 
+    def _folder_row(self, edit: QLineEdit) -> QWidget:
+        """A path field with a Browse... button."""
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(edit, 1)
+        browse = QPushButton("Browse...")
+        browse.clicked.connect(lambda: self._browse(edit))
+        layout.addWidget(browse)
+        return row
+
+    def _browse(self, edit: QLineEdit) -> None:
+        start = edit.text().strip() or str(report_paths.local_results_dir())
+        chosen = QFileDialog.getExistingDirectory(self, "Choose folder", start)
+        if chosen:
+            edit.setText(str(Path(chosen)))
+
+    @staticmethod
+    def _folder_problem(text: str) -> str:
+        """"" if `text` is empty or a folder this station can create and write to."""
+        if not text:
+            return ""
+        folder = Path(text)
+        probe = folder / f".dfx_write_test_{uuid.uuid4().hex}"
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink()
+            return ""
+        except OSError as exc:
+            return f"{folder}: {exc}"
+
     def _save(self) -> None:
         """Persist only the rows the admin actually changed.
 
@@ -141,6 +214,18 @@ class ConnectionsDialog(QDialog):
         address into the database, where they then shadowed the file forever with
         no way back, and reported a restart-required for a change nobody made.
         """
+        results_value = self._edit_results.text().strip()
+        xml_value = self._edit_xml.text().strip()
+        problems = [p for p in (self._folder_problem(results_value), self._folder_problem(xml_value)) if p]
+        if problems:
+            QMessageBox.warning(
+                self,
+                "Folder not usable",
+                "This station cannot write to:\n\n" + "\n".join(problems)
+                + "\n\nCheck the path and the access rights, or leave it blank.",
+            )
+            return  # keep the dialog open
+
         changed: list[str] = []
         stored = self._db.list_instrument_connections()
 
@@ -164,6 +249,8 @@ class ConnectionsDialog(QDialog):
 
         load_value = self._edit_load.text().strip()
         _write(LOAD_RESOURCE_KEY, load_value, "load address", self._initial_load)
+        _write(RESULTS_DIR_KEY, results_value, f"reports folder={results_value or 'default'}", self._initial_results)
+        _write(XML_DIR_KEY, xml_value, f"XML folder={xml_value or 'default'}", self._initial_xml)
 
         for name, edit in self._fields.items():
             _write(name, edit.text().strip(), name, stored.get(name, ""))

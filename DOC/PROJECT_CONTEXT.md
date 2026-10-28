@@ -92,7 +92,17 @@ src/
   data/                # writable state (git-ignored)
     database.db        # SQLite
     logs/              # encrypted sys_YYYYMMDD.dat files
-    results/           # archived PDFs under <UUT>/<Serial>/
+    results/           # archived PDFs under <UUT>/<Serial>_<dd-mm-yyyy>_<HHhMMmSSs>/
+                       #   one folder per test, named by serial and test start,
+                       #   day first, e.g. 2456_19-10-2026_13h06m53s (2026-10-28)
+                       # results/XML/: a copy of every CAMSTAR XML report
+                       #   (or XML_EXPORT_DIR, e.g. a share); never overwritten,
+                       #   a failed copy warns (XmlCopyError) - the unit copy stays
+                       # Both folders can be chosen by the Admin in Connections >
+                       #   Reports (logic/report_paths.py: database, then .env, then
+                       #   default; applied to the next report). An unreachable
+                       #   chosen folder (e.g. a share that is down) falls back to
+                       #   data/results and warns "Report saved locally".
     tmp/               # scratch .tst files, swept on startup
 ```
 
@@ -787,7 +797,8 @@ DEFAULT_ADMIN_EMPLOYEE_ID
 APP_VERSION               # shown in window title
 TESTER_SERIAL_NUMBER      # printed on reports
 SHOW_SEARCH_BAR           # true/false
-UUT_TYPES                 # comma-separated list for PreTest combo
+UUT_TYPES                 # comma-separated list for PreTest combo (EM-5406-00)
+XML_EXPORT_DIR            # folder collecting every XML report (empty = data/results/XML)
 TEST_LOAD_MODEL           # <TestLoad><Model> in the CAMSTAR XML (3316G)
 INPUT_CONNECTED_TARGET_V  # 24 V presence check target
 INPUT_CONNECTED_TOLERANCE_PCT

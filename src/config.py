@@ -12,7 +12,10 @@ SHOW_SEARCH_BAR: bool = get_bool("SHOW_SEARCH_BAR", False)
 SHOW_NIGHT_MODE: bool = get_bool("SHOW_NIGHT_MODE", False)
 
 # --- Pre-test dialog UUT options ---
-UUT_TYPES: list[str] = get_list("UUT_TYPES", ["Power main", "Power Ctrl DSP", "Demo UUT"])
+UUT_TYPES: list[str] = get_list("UUT_TYPES", ["EM-5406-00", "EM-5406-00F"])
+# Folder that collects a copy of every CAMSTAR XML report (empty = data/results/XML).
+# May point at a network share, e.g. \\server\camstar\in.
+XML_EXPORT_DIR: str = get_str("XML_EXPORT_DIR", "")
 LOAD_SERIALS: list[str] = get_list(
     "LOAD_SERIALS",
     ["PRODIGIT-CH1", "PRODIGIT-CH2", "PRODIGIT-CH3", "PRODIGIT-CH4"],

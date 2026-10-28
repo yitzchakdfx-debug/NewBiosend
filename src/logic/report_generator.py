@@ -6,10 +6,11 @@ import csv
 import io
 import math
 import re
+import shutil
 from datetime import datetime
 from html import escape
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
@@ -38,8 +39,8 @@ from logic.report_xml import (
     template_values,
     tree_to_text,
 )
+from logic import report_paths
 from logic.roles import Capability, can, role_label
-from paths import user_data_path
 
 class ReportsForbiddenError(PermissionError):
     """Raised when a role that may not produce reports asks for one."""
@@ -65,10 +66,45 @@ def sanitize_path_segment(value: str) -> str:
 
 
 class ReportGenerator:
-    """Writes PDF archives under src/data/results/<UUT>/<Serial>/ and optional manual exports."""
+    """Writes PDF archives under src/data/results/<UUT>/<Serial>_<dd-mm-yyyy>_<HHhMMmSSs>/ and optional manual exports."""
 
     def __init__(self, base_dir: Path | None = None) -> None:
-        self._base = base_dir if base_dir is not None else user_data_path("results")
+        self._base = base_dir if base_dir is not None else report_paths.results_dir()
+        #: Set when a report could not be written to the chosen folder (e.g. a
+        #: network share that is down) and was saved locally instead.
+        self.fallback_notes: list[str] = []
+
+    def _write_archived(self, run_meta: dict[str, Any], name: Callable[[str], str],
+                        write: Callable[[Path], None]) -> Path:
+        """Write one archive file; fall back to the local folder if the chosen one fails.
+
+        A report must never be lost because the reports folder — typically a
+        network share — is unreachable at that moment. The fallback keeps the
+        same `<UUT>/<SN>_<date_time>/` layout under the station's own folder and
+        records a note the caller shows the operator.
+        """
+        archive_dir, stem = self._resolved_archive_paths(run_meta)
+        path = archive_dir / name(stem)
+        try:
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            write(path)
+            return path
+        except OSError as exc:
+            local = report_paths.local_results_dir()
+            if str(self._base) == str(local):
+                raise
+            local_dir = local / archive_dir.relative_to(self._base)
+            local_dir.mkdir(parents=True, exist_ok=True)
+            fallback = local_dir / name(stem)
+            write(fallback)
+            note = (
+                f"The reports folder {self._base} is not reachable ({exc}) - the "
+                f"report was saved locally in {local_dir}. Copy it to the shared "
+                "folder when it is reachable again."
+            )
+            if note not in self.fallback_notes:
+                self.fallback_notes.append(note)
+            return fallback
 
     def suggested_export_path(self, run_meta: dict[str, Any], suffix: str = ".pdf") -> Path:
         """Return the path that ``generate_pdf_auto_archive`` would write to.
@@ -81,13 +117,23 @@ class ReportGenerator:
         return archive_dir / (stem + suffix)
 
     def _resolved_archive_paths(self, run_meta: dict[str, Any]) -> tuple[Path, str]:
-        """Sanitized subdirectory (uut/serial), timestamp stem for filenames."""
+        """Sanitized subdirectory (uut/serial_date_time), timestamp stem for filenames.
+
+        Each test gets its own folder, named with the unit's serial and when its
+        test started, day first: `2456_19-10-2026_13h06m53s` (Windows forbids
+        `:`). The start time, not the write time, so the PDF and the XML —
+        written by two separate calls — always land in the same folder.
+        """
         uut_seg = sanitize_path_segment(str(run_meta.get("uut_type", "")).strip())
         sn_seg = sanitize_path_segment(str(run_meta.get("serial_number", "")).strip())
         test_name_meta = str(run_meta.get("test_program_name", "report")).strip()
         stem_test = sanitize_path_segment(test_name_meta)
 
-        archive_dir = self._base / uut_seg / sn_seg
+        try:
+            started = datetime.fromisoformat(str(run_meta.get("start_time", "")))
+        except ValueError:
+            started = datetime.now()
+        archive_dir = self._base / uut_seg / f"{sn_seg}_{started.strftime('%d-%m-%Y_%Hh%Mm%Ss')}"
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
         stem = "_".join(
             [
@@ -107,11 +153,11 @@ class ReportGenerator:
         """Persist only PDF under the structured archive folder (CSV is manual-export only)."""
         role_key = role.strip().title()
         _reject_if_reports_forbidden(role_key)
-        archive_dir, stem = self._resolved_archive_paths(run_meta)
-        archive_dir.mkdir(parents=True, exist_ok=True)
-        pdf_path = archive_dir / f"{stem}_{role_key.replace(' ', '_')}.pdf"
-        write_pdf_report(pdf_path, run_meta, results, role_key)
-        return pdf_path
+        return self._write_archived(
+            run_meta,
+            lambda stem: f"{stem}_{role_key.replace(' ', '_')}.pdf",
+            lambda path: write_pdf_report(path, run_meta, results, role_key),
+        )
 
     def generate_xml_auto_archive(
         self,
@@ -121,11 +167,37 @@ class ReportGenerator:
     ) -> Path:
         """Write XML report alongside the PDF in the same archive folder."""
         _reject_if_reports_forbidden(role.strip().title())
-        archive_dir, stem = self._resolved_archive_paths(run_meta)
-        archive_dir.mkdir(parents=True, exist_ok=True)
-        xml_path = archive_dir / f"{stem}.xml"
-        write_xml_report(xml_path, run_meta, results)
+        xml_path = self._write_archived(
+            run_meta,
+            lambda stem: f"{stem}.xml",
+            lambda path: write_xml_report(path, run_meta, results),
+        )
+        self._copy_to_xml_folder(xml_path)
         return xml_path
+
+    def xml_folder(self) -> Path:
+        """Where every XML report is also collected (see `logic.report_paths.xml_dir`)."""
+        return report_paths.xml_dir(self._base)
+
+    def _copy_to_xml_folder(self, xml_path: Path) -> Path:
+        """Copy a written XML report into the shared XML folder, never overwriting.
+
+        The unit-folder copy already exists when this runs, so a failure here
+        (e.g. a network share that is down) loses nothing; it raises
+        `XmlCopyError` naming where the report is so it can be copied by hand.
+        """
+        folder = self.xml_folder()
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            target = folder / xml_path.name
+            n = 2
+            while target.exists():
+                target = folder / f"{xml_path.stem}_{n}{xml_path.suffix}"
+                n += 1
+            shutil.copy2(xml_path, target)
+            return target
+        except OSError as exc:
+            raise XmlCopyError(xml_path, folder, exc) from exc
 
     def generate_csv_file(
         self,
@@ -717,6 +789,14 @@ def write_pdf_report(
     doc.build(flow)
     path.write_bytes(buffer.getvalue())
     buffer.close()
+
+
+class XmlCopyError(OSError):
+    """The XML report was written to the unit folder but not copied to the XML folder."""
+
+    def __init__(self, xml_path: Path, folder: Path, cause: Exception) -> None:
+        super().__init__(f"{xml_path} could not be copied to {folder}: {cause}")
+        self.xml_path, self.folder, self.cause = xml_path, folder, cause
 
 
 class XmlMappingMissingError(RuntimeError):

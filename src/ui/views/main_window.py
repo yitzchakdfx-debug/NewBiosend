@@ -54,7 +54,7 @@ from logic.roles import Capability, can
 from logic.script_manager import ScriptManager, ScriptParseError
 from logic.secure_logger import get_secure_logger
 from logic.test_engine import POLARITY_SETTLE_S, TestRunnerThread
-from paths import resource_path, user_data_path
+from paths import resource_path
 from ui.views.audit_viewer_dialog import AuditViewerDialog
 from ui.views.connections_dialog import ConnectionsDialog
 from ui.views.led_check_dialog import LedCheckDialog
@@ -68,6 +68,7 @@ from ui.views.user_management_dialog import UserManagementDialog
 from ui.views.version_manager_dialog import VersionManagerDialog
 from ui.widgets.control_panel import ControlPanelWidget, UnitProgressRow
 from ui.widgets.link_led import LinkLed, PingProbe, host_from_visa
+from logic import report_paths
 from ui.widgets.result_row_delegate import ResultRowDelegate
 from ui.widgets.wrap_item_delegate import WrapItemDelegate
 from version import __version__
@@ -106,7 +107,6 @@ def _format_measurement(value: float) -> str:
 
 class MainWindow(QMainWindow):
     _ICONS_DIR = resource_path("ui", "assets", "icons")
-    _RESULTS_DIR = user_data_path("results")
     #: Live-table rows: `live_reading` key -> row label. One column per UUT.
     _LIVE_QUANTITIES = {"V": "Voltage [V]", "A": "Current [A]", "W": "Power [W]"}
 
@@ -397,8 +397,14 @@ class MainWindow(QMainWindow):
         self.control_panel.reset_unit_progress()
 
     def _ensure_results_dir(self) -> Path:
-        self._RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-        return self._RESULTS_DIR
+        """The reports folder the Admin chose (Connections), else data/results."""
+        folder = report_paths.results_dir()
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            folder = report_paths.local_results_dir()  # chosen share unreachable
+            folder.mkdir(parents=True, exist_ok=True)
+        return folder
 
     def _default_export_basename(self) -> str:
         part = sanitize_path_segment(self.control_panel.edit_part_number.text())
@@ -455,6 +461,7 @@ class MainWindow(QMainWindow):
         
         rg = ReportGenerator()
         archive_dir, stem = rg._resolved_archive_paths(self._last_run_meta)
+        archive_dir.mkdir(parents=True, exist_ok=True)  # may not exist when "Save as log" is off
         role_key = self._current_role().replace(" ", "_")
         suggested = archive_dir / f"{stem}_{role_key}.csv"
         
@@ -493,6 +500,7 @@ class MainWindow(QMainWindow):
         
         rg = ReportGenerator()
         archive_dir, stem = rg._resolved_archive_paths(self._last_run_meta)
+        archive_dir.mkdir(parents=True, exist_ok=True)  # may not exist when "Save as log" is off
         role_key = self._current_role().replace(" ", "_")
         suggested = archive_dir / f"{stem}_{role_key}.pdf"
         
@@ -1027,6 +1035,8 @@ class MainWindow(QMainWindow):
         # The PDF archived but the CAMSTAR XML did not. Surfaced separately and
         # prominently: the run looks complete, yet MES has nothing to ingest.
         worker.xml_failed.connect(self._on_xml_report_failed)
+        worker.xml_copy_failed.connect(self._on_xml_copy_failed)
+        worker.saved_locally.connect(self._on_report_saved_locally)
         # A bound method, not a lambda: it is queued to the GUI thread reliably.
         # The lambda this replaces could miss, leaving a deleted worker in the
         # list — closing the app then crashed in _shutdown_threads.
@@ -2219,6 +2229,21 @@ class MainWindow(QMainWindow):
         stamped = f"{datetime.now().strftime('[%H:%M:%S]')} {msg}"
         entry_type = "cmd" if msg.startswith("Executing:") else "info"
         self._record_trace(entry_type, stamped)
+
+    def _on_report_saved_locally(self, note: str) -> None:
+        """The chosen reports folder (e.g. a share) was unreachable; nothing was lost."""
+        self._record_trace("error", note)
+        QMessageBox.warning(self, "Report saved locally", note)
+
+    def _on_xml_copy_failed(self, error: str) -> None:
+        """The XML exists in the unit folder; only the shared-folder copy failed."""
+        self._record_trace("error", f"XML report not copied to the XML folder: {error}")
+        QMessageBox.warning(
+            self,
+            "XML not copied",
+            "The XML report was saved in the unit's folder, but could not be "
+            f"copied to the XML folder:\n\n{error}\n\nCopy it there manually.",
+        )
 
     def _on_xml_report_failed(self, error: str) -> None:
         """Report a CAMSTAR XML export failure without hiding it in the trace.

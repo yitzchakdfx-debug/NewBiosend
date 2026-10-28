@@ -119,6 +119,7 @@ dist\DFX_Tester\
 | Users, passwords, roles | In-app: **Admin > User Management** | immediately |
 | Simulator ↔ Prodigit | In-app: **Admin > Connections** | next launch |
 | Electronic load address | In-app: **Admin > Connections** | next launch |
+| Reports folder / XML folder (may be a network share) | In-app: **Admin > Connections > Reports** | next report |
 | Test limits, durations, resistance | In-app: **Admin > Limits Editor** | next run |
 | Report templates (PDF/XML) | In-app: **Admin > Report Templates** | next report |
 | Everything else (secrets, VISA tuning) | `.env` beside the `.exe` | next launch |
