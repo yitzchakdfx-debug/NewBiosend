@@ -30,6 +30,7 @@ from logic.report_templates import (
     validate_xml_template,
 )
 from version import __version__
+from datetime import datetime
 
 #: Unit of measure per quantity, fixed by the schema. Deliberately not taken
 #: from the step's `Unit` string: a typo there must not produce XML that
@@ -178,7 +179,16 @@ def template_values(run_meta: dict[str, Any]) -> dict[str, str]:
         # leave no N/A row, so without this a reduced run would be
         # indistinguishable from a full pass on the report.
         "steps_executed": str(run_meta.get("steps_executed", "")),
+        # Appendix A "Test Date & Time": the unit's start, day first.
+        "test_datetime": _day_first(str(run_meta.get("start_time", ""))),
     }
+
+
+def _day_first(iso: str) -> str:
+    try:
+        return datetime.fromisoformat(iso).strftime("%d/%m/%Y %H:%M:%S")
+    except ValueError:
+        return iso
 
 
 def build_tests_element(results: list[dict[str, Any]]) -> ET.Element:

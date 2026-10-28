@@ -171,6 +171,33 @@ Three consequences worth knowing:
   row. PDF only — the CSV still has one row per step. Loop headers are now
   derived from the rows' `loop` (run_meta never carried `loop_count`, so
   they were never printed).
+* **Customer POD test list fixes** (2026-10-28):
+  - *Polarity N/A (Req 10).* `_backfill_skipped` calls `_backfill_polarity`:
+    in a production run that ended before the engine's polarity gate (LED fail
+    at setup or in the run, failed input check), a skipped "Polarity Check"
+    row with `report_test`/`report_quantity` is added, so the PDF and XML list
+    all four tests. N/A step rows now carry their step's limits (blanked in
+    every table) so Expected Value can still be stated.
+  - *Appendix A header (Req 14).* Default `header_fields`: Product Name,
+    Operator Name, Serial Number (UUT), Test Date & Time (`test_datetime`, the
+    start, `dd/mm/yyyy HH:MM:SS`), Test Load 3316G Channel ID (SN); then
+    Result (Overall), Tests Passed, Part Number, Test Program, SW Version. A
+    saved template still equal to the previous default is upgraded.
+  - *Expected Value from limits (Req 22/25).* `test_sections` text may use
+    `{nominal} {tol} {min} {max}`, filled by `_expected_text` from the test's
+    voltage limits; the Low Load / Burn-In default is
+    `EXPECTED_FROM_LIMITS` ("24VDC ±5% (22.8-25.2 V)"); a saved "24VDC ±5%" is
+    upgraded.
+  - *Loads off when the link returns (Req 26).* A failed load-off or a lost
+    link sets `MainWindow._loads_unconfirmed`; the next successful idle ping
+    runs `_switch_all_loads_off()` (shared with the exit load-off) and, once
+    every channel reads back off, says so ("Load communication restored").
+* **No Unit column in the PDF** (2026-10-28). A merged point has four units,
+  so the default `detail_columns` drop "Unit" and the unit is printed with
+  the value ("24 V", "1 pass"); `read_pdf_template` migrates a saved template
+  whose columns are exactly the old default. The CSV re-inserts a Unit column
+  after Value so its values stay plain numbers. An admin who adds a Unit
+  column back gets the old layout.
 * **On-screen and report text uses a plain hyphen `-`** (2026-10-18), not the
   em/en dash (`—`/`–`), at the user's request — including the "empty cell"
   marker in the limits editor (`_locked_dash`; `_get_text` treats `-` as empty).
@@ -780,7 +807,7 @@ LOAD_RESISTANCE_50W_OHM   # 12.5 — legacy scripts still named "50W"
 | §1.1.4.4 Note 2 — admin-updatable PDF template, changes reflected in the report | same; consumed by `write_pdf_report`, which calls `read_pdf_template()` per report so a save applies to the next report with no restart. Verified by mutating each field with a unique token and inspecting the rendered flowables: `title`, `subtitle`, `header_fields`, `detail_columns` and `test_sections` all propagate. `summary_columns` is **CSV-only** and deliberately does not — the PDF always uses `detail_columns` because Appendix A requires the measured values regardless of the operator's role |
 | §1.1.4.5 failed test → later tests **N/A** | `skipped` flag carried through `BatchUnitReport.rows()`; `N/A` in PDF/CSV and empty `<Value/>` in XML |
 | §1.1.4.5 "proceed only if the previous test has passed" | `TestRunnerThread.__init__`: `self._stop_on_fail = stop_on_fail or production_flow`. A production run **always** halts on the first failure — the caller's flag can add stopping, never remove it. Previously it was honoured as given and the "Stop on fail" checkbox ships unticked, so any step lacking the `Critical` keyword continued after a failure. The checkbox now only matters in Maintenance, where continuing past a failure is a legitimate diagnostic |
-| §1.1.4.3 no configuration privileges for production roles | A role with `SELECT_STEPS` can untick steps, and deselected steps are filtered before execution so they leave no `N/A` row. `BatchUnitReport.step_coverage()` records `"17 / 20 (partial)"` into `meta["steps_executed"]`, surfaced as the PDF's "Tests Executed" header field and the `{{steps_executed}}` XML placeholder, so a reduced run can never read as a full pass. Omitted from the PDF when the run was full |
+| §1.1.4.3 no configuration privileges for production roles | A role with `SELECT_STEPS` can untick steps, and deselected steps are filtered before execution so they leave no `N/A` row. `BatchUnitReport.step_coverage()` records `"17 / 20 (partial)"` into `meta["steps_executed"]`, feeds the `{{steps_executed}}` XML placeholder. The PDF header shows **"Tests Passed: X / 4"** instead (2026-10-28, `report_generator._tests_passed`): report tests whose every row passed, out of the template's test sections (a test with no row, e.g. Polarity after an LED fail, counts as not passed), with "(partial run)" appended when steps were deselected, so a reduced run can still never read as a full pass. `read_pdf_template` swaps a saved template's old `["Tests Executed", "steps_executed"]` row for `["Tests Passed", "tests_passed"]` |
 | §1.1.7.1 Polarity = voltage readback, load OFF | the engine's `_check_polarity` gate, which issues its own `loadoff` and waits `_POLARITY_SETTLE_MS` (3 s) immediately before reading — not a script step, so the load-off and settle cannot be reordered away from the measurement |
 | §1.1.7.2 Low Load 100 W @ **5.76 Ω**, monitored for the full minute | `:Low Load 100W Setup` `setresistance 5.76`; `Delay 60000 22.8 25.2` |
 | §1.1.7.3 Burn-In @ **2.0 Ω**, monitored across 30 min, t1/t2/t3 | `:Burn-In 300W Setup` `setresistance 2.0`; `Delay <ms> 22.8 25.2` on each voltage step |

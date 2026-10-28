@@ -71,11 +71,30 @@ DEFAULT_XML_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
 </TestReport>
 """
 
+#: Expected-Value text computed from a test's voltage limits (see
+#: `report_generator._expected_text`).
+EXPECTED_FROM_LIMITS = "{nominal}VDC ±{tol}% ({min}-{max} V)"
+
 DEFAULT_PDF_TEMPLATE: dict[str, Any] = {
     "title": "Power Supply EM-5406-00F / EM-5406-00 Load Test Report",
     "subtitle": "Complies with TI-5406-00, latest revision.",
     "logo_path": "",
+    # Appendix A §2.1.2's five fields first, with its labels and order; then
+    # the result and traceability rows (2026-10-28). Employee ID, End Time,
+    # SW SN and Role remain available as fields for an admin to add back.
     "header_fields": [
+        ["Product Name", "uut_type"],
+        ["Operator Name", "tester_name"],
+        ["Serial Number (UUT)", "serial_number"],
+        ["Test Date & Time", "test_datetime"],
+        ["Test Load 3316G Channel ID (SN)", "load_channel_id"],
+        ["Result (Overall)", "overall_result"],
+        ["Tests Passed", "tests_passed"],
+        ["Part Number", "part_number"],
+        ["Test Program", "test_program_name"],
+        ["SW Version", "software_version"],
+    ],
+    "_previous_header_fields": [
         ["Result (Overall)", "overall_result"],
         ["User Name", "tester_name"],
         ["Employee ID", "employee_id"],
@@ -96,23 +115,27 @@ DEFAULT_PDF_TEMPLATE: dict[str, Any] = {
         ["SW SN", "tester_serial"],
         ["SW Version", "software_version"],
         ["Role / Report Detail", "role"],
-        # Discloses a partial run. A role holding SELECT_STEPS may untick steps,
-        # and deselected steps are filtered out before execution — leaving no
-        # N/A row — so without this line a reduced run reads as a full pass.
-        # Renders as "17 / 20 (partial)", or is omitted when the run was full.
-        ["Tests Executed", "steps_executed"],
+        # How many of the report tests (LED, Polarity, Low Load, Burn-In)
+        # passed: "2 / 4". Adds "(partial run)" when steps were deselected
+        # before the run, which leaves no N/A row — the disclosure the older
+        # "Tests Executed 17 / 20 (partial)" line made. `steps_executed` is
+        # still available as a field (and in the XML).
+        ["Tests Passed", "tests_passed"],
     ],
     # [column label, value field]. Fields: test_name, min, max, value, unit,
     # result. Labels are free text; fields must come from that set.
     #
     # `detail_columns` drives the PDF's "All Recorded Steps" table, and the CSV
     # export for roles holding `Capability.VIEW_MEASURED_DETAIL`.
+    #
+    # No "Unit" column (2026-10-28): a merged measurement point carries four
+    # units, so the unit is printed with the value ("24 V", "1 pass"). The CSV
+    # adds its own Unit column back so the numbers stay machine-readable.
     "detail_columns": [
         ["Test Name", "test_name"],
         ["Min", "min"],
         ["Max", "max"],
         ["Value", "value"],
-        ["Unit", "unit"],
         ["Status", "result"],
     ],
     # CSV-ONLY, for roles without `Capability.VIEW_MEASURED_DETAIL`. The PDF
@@ -139,12 +162,15 @@ DEFAULT_PDF_TEMPLATE: dict[str, Any] = {
             "expected": "Positive (+24VDC)",
             "load_mode": "",
         },
+        # {nominal} {tol} {min} {max} are filled from the test's actual voltage
+        # limits, so a limits change in the editor shows in the report (Req
+        # 22/25). With 22.8-25.2 V: "24VDC ±5% (22.8-25.2 V)".
         "Low Load Stability Test": {
-            "expected": "24VDC ±5%",
+            "expected": EXPECTED_FROM_LIMITS,
             "load_mode": "Constant Resistance (CR)",
         },
         "Burn-In / Continuous Load Test": {
-            "expected": "24VDC ±5%",
+            "expected": EXPECTED_FROM_LIMITS,
             "load_mode": "Constant Resistance (CR)",
         },
     },
@@ -196,6 +222,23 @@ def write_xml_template(text: str) -> None:
     _template_path(XML_TEMPLATE_NAME).write_text(text, encoding="utf-8")
 
 
+#: Previous default header rows (before Appendix A ordering, 2026-10-28), with
+#: either Tests line. A saved template that still equals one is upgraded.
+_OLD_HEADERS = [
+    DEFAULT_PDF_TEMPLATE.pop("_previous_header_fields"),
+]
+_OLD_HEADERS.append(
+    [["Tests Executed", "steps_executed"] if h == ["Tests Passed", "tests_passed"] else h
+     for h in _OLD_HEADERS[0]]
+)
+
+#: The default results columns before the Unit column was folded into Value.
+_OLD_DETAIL_COLUMNS = [
+    ["Test Name", "test_name"], ["Min", "min"], ["Max", "max"],
+    ["Value", "value"], ["Unit", "unit"], ["Status", "result"],
+]
+
+
 def read_pdf_template() -> dict[str, Any]:
     """Current PDF template config, with defaults filled in for missing keys."""
     merged = dict(DEFAULT_PDF_TEMPLATE)
@@ -205,6 +248,30 @@ def read_pdf_template() -> dict[str, Any]:
         return merged
     if isinstance(loaded, dict):
         merged.update(loaded)
+    # A template saved before 2026-10-28 still has the Unit column; drop it
+    # from the unedited default column set only.
+    if [list(c) for c in merged.get("detail_columns") or []] == _OLD_DETAIL_COLUMNS:
+        merged["detail_columns"] = [list(c) for c in DEFAULT_PDF_TEMPLATE["detail_columns"]]
+    if [list(h) for h in merged.get("header_fields") or []] in _OLD_HEADERS:
+        merged["header_fields"] = [list(h) for h in DEFAULT_PDF_TEMPLATE["header_fields"]]
+    sections = merged.get("test_sections")
+    if isinstance(sections, dict):
+        upgraded = {}
+        for name, cfg in sections.items():
+            if isinstance(cfg, dict) and str(cfg.get("expected", "")).strip() == "24VDC ±5%":
+                cfg = {**cfg, "expected": EXPECTED_FROM_LIMITS}
+            upgraded[name] = cfg
+        merged["test_sections"] = upgraded
+    # A template saved before 2026-10-28 still lists the step count. Swap that
+    # exact default row for the tests-passed one; an admin's own rows are kept.
+    headers = merged.get("header_fields")
+    if isinstance(headers, list):
+        merged["header_fields"] = [
+            ["Tests Passed", "tests_passed"]
+            if list(entry) == ["Tests Executed", "steps_executed"] else entry
+            for entry in headers
+            if isinstance(entry, (list, tuple))
+        ]
     return merged
 
 
@@ -336,6 +403,8 @@ def placeholder_names() -> set[str]:
         # a name missing here is rejected by `validate_pdf_template` even though
         # the report layer would render it fine.
         "steps_executed",
+        "tests_passed",
+        "test_datetime",
         "test_load_model",
         "tester_serial",
         "software_version",

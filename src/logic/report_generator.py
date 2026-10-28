@@ -178,9 +178,35 @@ def _fmt_num(v: Any) -> str:
     return f"{f:g}"
 
 
-def _header_rows(run_meta: dict[str, Any], role: str) -> list[tuple[str, str]]:
+def _tests_passed(run_meta: dict[str, Any], results: list[dict[str, Any]]) -> str:
+    """`"2 / 4"`: report tests whose every row passed, out of the report's tests.
+
+    The denominator is the template's test sections (the spec's four) when the
+    run's tests are among them, so a test with no row at all — Polarity after
+    an LED fail — still counts as not passed. A deselected-steps run says so.
+    """
+    groups = group_by_report_test(results)
+    passed = sum(
+        1 for _, rows in groups
+        if rows and all(r.get("passed") and not r.get("skipped") for r in rows)
+    )
+    sections = list(read_pdf_template().get("test_sections") or {})
+    names = [name for name, _ in groups]
+    total = len(sections) if names and all(n in sections for n in names) else len(names)
+    if not total:
+        return ""
+    text = f"{passed} / {total}"
+    if "partial" in str(run_meta.get("steps_executed", "")):
+        text += " (partial run)"
+    return text
+
+
+def _header_rows(
+    run_meta: dict[str, Any], role: str, results: list[dict[str, Any]] | None = None
+) -> list[tuple[str, str]]:
     """Header label/value pairs, ordered and selected by the PDF template."""
     values = template_values(run_meta)
+    values["tests_passed"] = _tests_passed(run_meta, results or [])
     values["role"] = role_label(role)  # the spec's name, e.g. "Technician (Operator)"
     # The PDF has always shown channel as "CH1 / SN"; the XML uses the bare SN.
     load_ch = str(run_meta.get("load_serial_number", "")).strip()
@@ -235,10 +261,17 @@ def _row_cells(
 ) -> list[Any]:
     """Render one results row in the column order the template specifies."""
     status = "N/A" if skipped else ("PASS" if ok else "FAIL")
+    # Without a Unit column the unit rides with the value: "24 V", "1 pass".
+    unit_in_value = all(field != "unit" for _, field in columns)
     cells: list[Any] = []
     for _, field in columns:
         if field == "test_name":
             cells.append(Paragraph(escape(str(row.get("test_name", ""))), styles["Normal"]))
+        elif field == "value" and unit_in_value and "value_text" not in row:
+            unit = str(row.get("unit", "")).strip()
+            unit = "Ω" if unit.lower() == "ohm" else unit
+            text = "" if skipped else _fmt_num(row.get("value"))
+            cells.append(f"{text} {unit}".strip() if text else "")
         elif field == "result":
             cells.append(status)
         elif field == "unit":
@@ -384,6 +417,32 @@ def _measurement_lines(rows: list[dict[str, Any]]) -> list[tuple[str, str]]:
     return lines
 
 
+def _expected_text(text: str, rows: list[dict[str, Any]]) -> str:
+    """Fill {nominal} {tol} {min} {max} from the test's voltage limits.
+
+    Taken from the first voltage row with real limits (N/A rows carry their
+    step's limits too), so a limits change in the editor reaches the report.
+    Text without placeholders is returned as is; with placeholders but no
+    limits to fill them, the line is left out rather than printed half-empty.
+    """
+    if "{" not in text:
+        return text
+    for row in rows:
+        if str(row.get("report_quantity", "")).strip().lower() != "voltage":
+            continue
+        lo, hi = row.get("min"), row.get("max")
+        if _is_finite_number(lo) and _is_finite_number(hi) and hi > lo:
+            nominal = (lo + hi) / 2
+            tol = (hi - lo) / 2 / nominal * 100 if nominal else 0.0
+            return (
+                text.replace("{nominal}", f"{nominal:g}")
+                .replace("{tol}", f"{round(tol, 2):g}")
+                .replace("{min}", f"{lo:g}")
+                .replace("{max}", f"{hi:g}")
+            )
+    return ""
+
+
 def _appendix_a_sections(
     results: list[dict[str, Any]],
     template: dict[str, Any],
@@ -424,7 +483,7 @@ def _appendix_a_sections(
                 styles["Normal"],
             )
         )
-        expected = str(cfg.get("expected", "")).strip()
+        expected = _expected_text(str(cfg.get("expected", "")).strip(), rows)
         if expected:
             flow.append(
                 Paragraph(f"Expected Value: {escape(expected)}", styles["Normal"])
@@ -460,10 +519,15 @@ def _write_csv(
     template = read_pdf_template()
     key = "detail_columns" if can(role, Capability.VIEW_MEASURED_DETAIL) else "summary_columns"
     columns = _column_pairs(template, key)
+    # The PDF prints the unit inside Value; the CSV keeps it in its own column
+    # so the values stay plain numbers.
+    if any(f == "value" for _, f in columns) and not any(f == "unit" for _, f in columns):
+        at = next(i for i, (_, f) in enumerate(columns) if f == "value") + 1
+        columns = columns[:at] + [("Unit", "unit")] + columns[at:]
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["Field", "Value"])
-        for k, v in _header_rows(run_meta, role):
+        for k, v in _header_rows(run_meta, role, results):
             writer.writerow([k, v])
         writer.writerow([])
         writer.writerow([label for label, _ in columns])
@@ -526,7 +590,7 @@ def write_pdf_report(
     flow.append(Spacer(1, 0.15 * inch))
 
     header_data = [["Field", "Value"]]
-    for h, v in _header_rows(run_meta, role):
+    for h, v in _header_rows(run_meta, role, results):
         header_data.append([h, v])
     ht = Table(header_data, colWidths=[2.4 * inch, 4 * inch])
     ht.setStyle(

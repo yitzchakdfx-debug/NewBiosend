@@ -761,13 +761,17 @@ class TestRunnerThread(QThread):
             r["test_name"] for r in record.results
             if int(r.get("loop", 1) or 1) == loop_number
         }
+        self._backfill_polarity(record, unit, loop_number)
         for step in steps:
             if step.name in executed or getattr(step, "hidden", False):
                 continue
             na_payload: TestResultPayload = {
                 "value": 0.0,
-                "min": 0.0,
-                "max": 0.0,
+                # The step's own limits, so the report can still state what the
+                # test would have required (Expected Value). N/A rows never show
+                # them in a Min/Max column: the table and PDF blank skipped rows.
+                "min": step.min_val if step.min_val is not None else float("nan"),
+                "max": step.max_val if step.max_val is not None else float("nan"),
                 "unit": step.unit,
                 "passed": False,
                 "is_measurement": False,
@@ -785,6 +789,32 @@ class TestRunnerThread(QThread):
                     **dict(na_payload),
                 }
             )
+
+    def _backfill_polarity(self, record: TestRunRecord, unit: BatchUnit, loop_number: int) -> None:
+        """Add Polarity Check as N/A when a production run ended before it ran.
+
+        Polarity is an engine gate, not a script step, so the step backfill
+        above cannot see it: an LED fail (at setup or in the run) or a failed
+        input check left the report with three tests instead of the spec's four
+        (Req 10 / Appendix A-B: every test not performed is N/A).
+        """
+        if not self._production_flow:
+            return
+        if any(r.get("test_name") == "Polarity Check" for r in record.results):
+            return
+        payload: TestResultPayload = {
+            "value": 0.0,
+            "min": float("nan"),
+            "max": float("nan"),
+            "unit": "V",
+            "passed": False,
+            "is_measurement": False,
+        }
+        fields = {"report_test": "Polarity Check", "report_quantity": "Voltage"}
+        self._emit_result(unit, "Polarity Check", {**payload, "skipped": True, "loop": loop_number, **fields})
+        record.results.append(
+            {"test_name": "Polarity Check", "loop": loop_number, "skipped": True, **fields, **dict(payload)}
+        )
 
     def _run_single_unit_inner(
         self,
