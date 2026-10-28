@@ -74,6 +74,19 @@ def get_test_version(db_path: Path, version_id: int) -> dict | None:
         }
 
 
+def latest_test_version(db_path: Path) -> dict | None:
+    """The most recently stored version (highest id), with its content, or None.
+
+    By id rather than `created_at`: two saves within one second share a
+    timestamp, while ids only grow.
+    """
+    with open_conn(db_path) as conn:
+        row = conn.execute("SELECT MAX(id) AS id FROM test_versions;").fetchone()
+    if row is None or row["id"] is None:
+        return None
+    return get_test_version(db_path, int(row["id"]))
+
+
 def delete_test_version(db_path: Path, version_id: int) -> None:
     with open_conn(db_path) as conn:
         conn.execute("DELETE FROM test_versions WHERE id = ?;", (version_id,))

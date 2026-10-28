@@ -91,6 +91,9 @@ class DatabaseManager:
     def get_test_version(self, version_id: int) -> dict | None:
         return test_versions.get_test_version(self._db_path, version_id)
 
+    def latest_test_version(self) -> dict | None:
+        return test_versions.latest_test_version(self._db_path)
+
     def delete_test_version(self, version_id: int) -> None:
         test_versions.delete_test_version(self._db_path, version_id)
 

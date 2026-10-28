@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import math
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -54,7 +55,7 @@ from logic.roles import Capability, can
 from logic.script_manager import ScriptManager, ScriptParseError
 from logic.secure_logger import get_secure_logger
 from logic.test_engine import POLARITY_SETTLE_S, TestRunnerThread
-from paths import resource_path
+from paths import resource_path, user_tmp_path
 from ui.views.audit_viewer_dialog import AuditViewerDialog
 from ui.views.connections_dialog import ConnectionsDialog
 from ui.views.led_check_dialog import LedCheckDialog
@@ -164,7 +165,12 @@ class MainWindow(QMainWindow):
         self._apply_theme_file()
         self._update_icons(self.is_dark_mode)
         self._apply_role_permissions()
-        if not self._can(Capability.SELECT_STEPS):
+        # Every role starts on the newest catalog version; Select Product opens
+        # by itself only when there is none to start on.
+        started_on_latest = self._load_latest_version()
+        if started_on_latest:
+            pass
+        elif not self._can(Capability.SELECT_STEPS):
             # Roles that cannot pick individual steps start with no script at
             # all and must choose a product first.
             self._active_script_path = Path()
@@ -175,7 +181,8 @@ class MainWindow(QMainWindow):
         else:
             self._reload_script_into_list()
         self._fit_initial_size_to_screen()
-        QTimer.singleShot(0, self.load_script)
+        if not started_on_latest:
+            QTimer.singleShot(0, self.load_script)
 
     def _make_ribbon_button(self, object_name: str, text: str) -> QToolButton:
         btn = QToolButton()
@@ -351,6 +358,10 @@ class MainWindow(QMainWindow):
     def open_limits_editor(self) -> None:
         if not self._can(Capability.EDIT_LIMITS):
             return
+        if self._run_active():
+            # Saving switches the active test; that must not happen under a run.
+            QMessageBox.information(self, "Limits", "Stop the test before editing limits.")
+            return
         if not self._active_script_path.is_file():
             QMessageBox.information(self, "Limits", "Load a test first.")
             return
@@ -381,14 +392,18 @@ class MainWindow(QMainWindow):
         )
         if dialog.exec() == QDialog.DialogCode.Rejected:
             return
-        if dialog.is_apply_mode():
-            tmp = dialog.temp_path()
-            if tmp and tmp.is_file():
-                self._cleanup_operator_temp()
-                self._active_script_path = tmp
-                self._reload_script_into_list()
-        else:
-            self._reload_script_into_list()
+        saved = dialog.saved_version()
+        if saved is None:
+            return
+        version, content = saved
+        # The new version becomes the active test at once, so the next run and
+        # its report are that version (not the one the editor was opened on).
+        self._activate_catalog_content(
+            self._catalog_test_name or self._active_script_path.stem,
+            version,
+            self._catalog_uut_type,
+            content,
+        )
 
     def reset_counters(self) -> None:
         self.control_panel.label_pass.setText("PASS: 0")
@@ -1057,15 +1072,51 @@ class MainWindow(QMainWindow):
         if path is None:
             return
         catalog = dlg.selected_catalog() or {}
-        uut_type = str(catalog.get("uut_type", ""))
+        self._activate_script_file(
+            path,
+            str(catalog.get("test_name", path.stem)),
+            str(catalog.get("version_name", "")),
+            str(catalog.get("uut_type", "")),
+        )
+
+    def _activate_script_file(self, path: Path, test_name: str, version: str, uut_type: str) -> None:
+        """Make a catalog version (already written to `path`) the active test."""
         self._cleanup_operator_temp()
         self._operator_temp_script = path
         self._active_script_path = path
-        self._catalog_test_name = str(catalog.get("test_name", path.stem))
-        self._catalog_version = str(catalog.get("version_name", ""))
+        self._catalog_test_name = test_name
+        self._catalog_version = version
         self._catalog_uut_type = uut_type
         self.control_panel.edit_uut_type.setText(uut_type)
         self._reload_script_into_list()
+
+    def _activate_catalog_content(self, test_name: str, version: str, uut_type: str, content: str) -> bool:
+        """Write a catalog version to a temp file and make it the active test."""
+        try:
+            tmp_dir = user_tmp_path()
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            path = tmp_dir / f"dfx_op_{uuid.uuid4().hex}.tst"
+            path.write_text(content, encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.critical(self, "Test", f"Could not create temp file:\n{exc}")
+            return False
+        self._activate_script_file(path, test_name, version, uut_type)
+        return True
+
+    def _load_latest_version(self) -> bool:
+        """Start with the newest catalog version; False if the catalog is empty."""
+        try:
+            rec = DatabaseManager().latest_test_version()
+        except Exception:
+            rec = None
+        if not rec:
+            return False
+        return self._activate_catalog_content(
+            str(rec["test_name"]),
+            str(rec["version_name"]),
+            str(rec["uut_type"]),
+            str(rec["test_content"]),
+        )
 
     def _reload_script_into_list(self) -> None:
         """Parse the active script and repopulate the test list checkboxes."""

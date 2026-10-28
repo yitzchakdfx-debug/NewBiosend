@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import copy
-import uuid
 from dataclasses import dataclass
-from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QGuiApplication
@@ -27,7 +25,6 @@ from PySide6.QtWidgets import (
 from logic.database_manager import DatabaseManager
 from logic.models import ScriptDocument, TestStep
 from logic.script_manager import ScriptManager
-from paths import user_tmp_path
 
 
 # Commands that never carry a numeric setpoint as their first arg. Used only by
@@ -140,8 +137,8 @@ class LimitsEditorDialog(QDialog):
         self._row_of: list[int] = []
         self._heading_rows: list[tuple[int, list[int]]] = []  # (table row, member indices)
 
-        self._apply_mode = False
-        self._temp_path: Path | None = None
+        #: (version name, script text) once Save stored a new catalog version.
+        self._saved: tuple[str, str] | None = None
 
         # Allow the user to maximize/restore the dialog from the title bar.
         self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint)
@@ -159,7 +156,7 @@ class LimitsEditorDialog(QDialog):
             root.addWidget(
                 QLabel(
                     f"Edit parameters for {self._catalog_test_name!r}. "
-                    "Changes take effect when you Apply or Save."
+                    "Saving creates a new version, which becomes the active test."
                 )
             )
             self._table = QTableWidget(0, len(_HEADERS))
@@ -181,25 +178,23 @@ class LimitsEditorDialog(QDialog):
         self._btn_zoom = QPushButton("⛶ Maximize")
         self._btn_zoom.setObjectName("btn_limits_zoom")
         self._btn_zoom.clicked.connect(self._toggle_maximize)
-        self._btn_save = QPushButton("Save && update version")
+        # Save only. A run with changed limits must always belong to a stored,
+        # audit-logged catalog version: the old "Apply / run" ran a temp copy
+        # whose report still named the unchanged version.
+        self._btn_save = QPushButton("Save as new version")
         self._btn_save.setObjectName("btn_limits_save")
-        self._btn_apply = QPushButton("Apply / run")
-        self._btn_apply.setObjectName("btn_limits_apply")
         btn_cancel = QPushButton("Cancel")
         btn_cancel.setObjectName("btn_limits_cancel")
 
         no_steps = not self._all_steps
         self._btn_save.setEnabled(not no_steps)
-        self._btn_apply.setEnabled(not no_steps)
 
         self._btn_save.clicked.connect(self._on_save)
-        self._btn_apply.clicked.connect(self._on_apply)
         btn_cancel.clicked.connect(self.reject)
 
         btn_row.addWidget(self._btn_zoom)
         btn_row.addStretch()
         btn_row.addWidget(self._btn_save)
-        btn_row.addWidget(self._btn_apply)
         btn_row.addWidget(btn_cancel)
         root.addLayout(btn_row)
 
@@ -239,11 +234,9 @@ class LimitsEditorDialog(QDialog):
     # Public accessors
     # ------------------------------------------------------------------
 
-    def is_apply_mode(self) -> bool:
-        return self._apply_mode
-
-    def temp_path(self) -> Path | None:
-        return self._temp_path
+    def saved_version(self) -> tuple[str, str] | None:
+        """(version name, script text) of the version Save created, else None."""
+        return self._saved
 
     # ------------------------------------------------------------------
     # Row descriptor builder
@@ -691,33 +684,12 @@ class LimitsEditorDialog(QDialog):
             self._all_steps, metadata=self._metadata
         )
 
-    def _write_temp(self) -> Path | None:
-        try:
-            tmp_dir = user_tmp_path()
-            tmp_dir.mkdir(parents=True, exist_ok=True)
-            tmp = tmp_dir / f"dfx_limits_{uuid.uuid4().hex}.tst"
-            tmp.write_text(self._serialize(), encoding="utf-8")
-            return tmp
-        except OSError as exc:
-            self._error(f"Could not write temp file:\n{exc}")
-            return None
-
     def _error(self, msg: str) -> None:
         QMessageBox.warning(self, "Limits", msg)
 
     # ------------------------------------------------------------------
     # Button handlers
     # ------------------------------------------------------------------
-
-    def _on_apply(self) -> None:
-        if not self._validate_and_apply_table():
-            return
-        tmp = self._write_temp()
-        if tmp is None:
-            return
-        self._temp_path = tmp
-        self._apply_mode = True
-        self.accept()
 
     def _on_save(self) -> None:
         if not self._validate_and_apply_table():
@@ -771,8 +743,11 @@ class LimitsEditorDialog(QDialog):
         except Exception:
             pass
 
+        self._saved = (new_ver, content)
         QMessageBox.information(
-            self, "Limits", f"Saved as version {new_ver!r} for {self._catalog_test_name!r}."
+            self,
+            "Limits",
+            f"Saved as version {new_ver!r} for {self._catalog_test_name!r}.\n"
+            "It is now the active test.",
         )
-        self._apply_mode = False
         self.accept()
