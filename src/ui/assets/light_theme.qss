@@ -523,3 +523,6 @@ QLabel#unit_progress_time { font-family: Consolas, "Courier New", monospace; }
 QLabel#unit_progress_step { font-weight: normal; }
 /* Thin, text-less bar under the header line; overrides the global min-height. */
 QProgressBar#unit_progress_bar { min-height: 0px; max-height: 8px; border-radius: 3px; }
+/* A unit that failed: red bar and a red bold "FAIL" next to its channel. */
+QProgressBar#unit_progress_bar[failed="true"]::chunk { background-color: #dc2626; }
+QLabel#unit_progress_step[failed="true"] { color: #dc2626; font-weight: bold; }

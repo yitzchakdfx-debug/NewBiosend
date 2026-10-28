@@ -1101,7 +1101,11 @@ class MainWindow(QMainWindow):
         self.append_trace(
             f"Loaded {len(self._test_groups)} test(s) ({len(steps)} step(s)) from {logical_name}."
         )
-        self.control_panel.edit_part_number.setReadOnly(True)
+        # The Unit group is hidden; it reappears (editable) only when the script
+        # declares no PartNum, which a run requires.
+        has_part_number = bool(self.control_panel.edit_part_number.text().strip())
+        self.control_panel.edit_part_number.setReadOnly(has_part_number)
+        self.control_panel.unit_box.setVisible(not has_part_number)
 
     def _group_for_item(self, item: QListWidgetItem | None) -> TestGroup | None:
         if item is None:
@@ -1300,6 +1304,40 @@ class MainWindow(QMainWindow):
             return None
         return TestRunnerThread.step_delay_s(step) or None
 
+    #: Report test names as shown on a unit's progress row.
+    _SHORT_TEST_NAMES = {
+        "Low Load Stability Test": "Low Load",
+        "Burn-In / Continuous Load Test": "Burn-In",
+        "LED Indication Test": "LED",
+    }
+
+    def _step_label(self, step_name: str) -> str | None:
+        """What a unit's progress row shows for a step: "Burn-In t2", "Low Load setup".
+
+        A point's V/I/P/R steps share one label, so the row does not flicker
+        between them. A step without `Report` (a load setup) takes the next
+        reported test, as in the limits editor. None for steps the script does
+        not hold (the engine's polarity / input checks) or cannot place; the row
+        then abbreviates the step name instead.
+        """
+        document = self._active_document
+        steps = list(document.steps) if document else []
+        index = next((i for i, s in enumerate(steps) if s.name == step_name), None)
+        if index is None:
+            return None
+        step = steps[index]
+        test = (step.report_test or "").strip()
+        if test:
+            short = self._SHORT_TEST_NAMES.get(test, test)
+            if (step.report_quantity or "").strip():
+                return f"{short} t{step.report_index or 1}"
+            return short
+        following = next((s.report_test.strip() for s in steps[index + 1:]
+                          if (s.report_test or "").strip()), "")
+        if not following or not step.hidden:
+            return None
+        return f"{self._SHORT_TEST_NAMES.get(following, following)} setup"
+
     def _reset_live_readings(self, units: list[tuple[int, str]]) -> None:
         """Rebuild the live table with one column per (slot_index, serial), in slot order.
 
@@ -1399,7 +1437,9 @@ class MainWindow(QMainWindow):
         self.results_table.setRowCount(0)
         self._point_rows = {}
         self.control_panel.progress_total.setValue(0)
-        rows = self.control_panel.show_unit_progress([(1, "MAINT")], self._step_delay_s)
+        rows = self.control_panel.show_unit_progress(
+            [(1, "MAINT")], self._step_delay_s, self._step_label
+        )
         self.control_panel.btn_stop.setEnabled(True)
         self._clear_trace()
         self.append_trace(f"Maintenance run: {sorted(selection)}")
@@ -1462,7 +1502,9 @@ class MainWindow(QMainWindow):
         batch_units = list(pre_meta["batch_units"])
         unit_keys = [(u.slot_index, u.serial_number) for u in batch_units]
         self._reset_live_readings(unit_keys)
-        self._unit_rows = self.control_panel.show_unit_progress(unit_keys, self._step_delay_s)
+        self._unit_rows = self.control_panel.show_unit_progress(
+            unit_keys, self._step_delay_s, self._step_label
+        )
         operator = self.control_panel.edit_user_name.text().strip()
         part_number = self.control_panel.edit_part_number.text().strip()
         serial_number = batch_units[0].serial_number if batch_units else ""
@@ -1559,6 +1601,9 @@ class MainWindow(QMainWindow):
             self._batch_pass_count += 1
         else:
             self._batch_fail_count += 1
+            row = self._unit_rows.get(int(payload.get("slot_index", 0) or 0))
+            if row is not None:
+                row.mark_failed()
         self.control_panel.label_batch_summary.setText(
             f"Batch: {self._batch_pass_count} PASS / {self._batch_fail_count} FAIL"
         )
@@ -2160,8 +2205,10 @@ class MainWindow(QMainWindow):
             th.log_msg.connect(self.append_trace)
             th.test_result.connect(self.update_results_table)
             th.loop_started.connect(self._on_loop_started)
-            th.progress_total.connect(self.control_panel.progress_total.setValue)
             row = self._unit_rows[unit.slot_index]
+            # Through the unit's row, not straight to the bar: the panel shows
+            # the slowest running unit instead of whichever reported last.
+            th.progress_total.connect(row.set_total)
             th.progress_test.connect(row.set_progress)
             th.current_test.connect(row.on_step)
             th.current_unit_changed.connect(self._on_current_unit_changed)

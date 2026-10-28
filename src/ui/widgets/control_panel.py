@@ -85,12 +85,19 @@ class UnitProgressRow(QWidget):
         serial: str,
         duration_lookup: Callable[[str], float | None] | None = None,
         parent: QWidget | None = None,
+        label_lookup: Callable[[str], str | None] | None = None,
     ) -> None:
         super().__init__(parent)
         self._duration_lookup = duration_lookup
+        self._label_lookup = label_lookup
         self._started: float | None = None
         self._total_s: float | None = None
         self._done = False
+        #: This unit's share of the Total bar (parallel run), and whether it
+        #: has ended. Set by `set_total` / `on_step("")`.
+        self.total_percent = 0
+        self.finished = False
+        self.on_total_changed: Callable[[], None] | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 2)
@@ -130,6 +137,10 @@ class UnitProgressRow(QWidget):
     def reset(self) -> None:
         self._started = None
         self._done = False
+        self._failed = False
+        self.total_percent = 0
+        self.finished = False
+        self._set_failed_style(False)
         self.bar.setValue(0)
         self._step.setText("-")
         self._step.setToolTip("")
@@ -144,7 +155,14 @@ class UnitProgressRow(QWidget):
         if not name:
             self.tick()  # record the true end time, then freeze it
             self._started = None
-            if self._step.toolTip():
+            self.finished = True
+            if self.on_total_changed is not None:
+                self.on_total_changed()
+            if self._failed:
+                self._step.setText(self._fail_text)
+                self._done = True
+                self.bar.setValue(100)
+            elif self._step.toolTip():
                 self._step.setText("Done")
                 self._done = True
                 self.bar.setValue(100)
@@ -155,9 +173,37 @@ class UnitProgressRow(QWidget):
         self._started = time.monotonic()
         self._total_s = self._duration_lookup(name) if self._duration_lookup else None
         self.bar.setValue(0)
-        self._step.setText(short_step_name(name))
+        # "Burn-In t2" from the script when available; the abbreviation of the
+        # step name ("V 300W 15m") only for steps it cannot place.
+        label = self._label_lookup(name) if self._label_lookup else None
+        if label and len(label) > _SHORT_NAME_MAX:
+            label = label[: _SHORT_NAME_MAX - 1] + "…"
+        self._step.setText(label or short_step_name(name))
         self._step.setToolTip(name)
         self.tick()
+
+    def mark_failed(self, text: str = "FAIL") -> None:
+        """The unit failed: red full bar and `text` ("FAIL", "NO COMM") next to its channel."""
+        self._failed = True
+        self._fail_text = text
+        self._done = True
+        self._step.setText(text)
+        self.bar.setValue(100)
+        self._set_failed_style(True)
+
+    def _set_failed_style(self, failed: bool) -> None:
+        # A dynamic property, styled in the .qss (`[failed="true"]`); a widget
+        # must be re-polished for a property change to take effect.
+        for widget in (self.bar, self._step):
+            widget.setProperty("failed", failed)
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
+
+    def set_total(self, value: int) -> None:
+        """Slot for the runner's `progress_total` in a parallel run."""
+        self.total_percent = int(value)
+        if self.on_total_changed is not None:
+            self.on_total_changed()
 
     def set_progress(self, value: int) -> None:
         """Slot for the runner's `progress_test`.
@@ -221,8 +267,14 @@ class ControlPanelWidget(QWidget):
         user_form.addRow("Level", self.edit_user_level)
         root.addWidget(self.user_box)
 
+        # Hidden (2026-10-28): in a parallel run these showed one unit only; the
+        # CH1-CH4 rows, results headers and live table show every unit. The
+        # fields stay as data holders (part number, UUT type, serial feed the
+        # run meta and reports). Shown again only when a script has no PartNum,
+        # so the operator can type one.
         unit_box = QGroupBox("Unit")
         unit_box.setObjectName("grp_unit")
+        self.unit_box = unit_box
         unit_form = _make_form(unit_box)
         self.edit_uut_type = QLineEdit()
         self.edit_uut_type.setReadOnly(True)
@@ -233,6 +285,7 @@ class ControlPanelWidget(QWidget):
         self.edit_serial_number = QLineEdit()
         unit_form.addRow("Serial number", self.edit_serial_number)
         root.addWidget(unit_box)
+        unit_box.setVisible(False)
 
         status_box = QGroupBox("Status")
         status_box.setObjectName("grp_status")
@@ -251,6 +304,7 @@ class ControlPanelWidget(QWidget):
         self.edit_current_unit.setReadOnly(True)
         self.edit_current_unit.setPlaceholderText("-")
         status_form.addRow("Unit", self.edit_current_unit)
+        status_form.setRowVisible(self.edit_current_unit, False)  # see unit_box
 
         self.progress_total = QProgressBar()
         self.progress_total.setMaximumHeight(16)
@@ -320,11 +374,13 @@ class ControlPanelWidget(QWidget):
         self,
         units: list[tuple[int, str]],
         duration_lookup: Callable[[str], float | None] | None = None,
+        label_lookup: Callable[[str], str | None] | None = None,
     ) -> dict[int, UnitProgressRow]:
         """Rebuild one progress row per (slot_index, serial), in slot order.
 
         Returns the rows keyed by slot so each runner thread can be wired to its
-        own unit's row. `duration_lookup(step_name)` gives a step's total wait.
+        own unit's row. `duration_lookup(step_name)` gives a step's total wait;
+        `label_lookup(step_name)` the name to show ("Burn-In t2"), or None.
         """
         while self._unit_rows_layout.count():
             item = self._unit_rows_layout.takeAt(0)
@@ -337,12 +393,28 @@ class ControlPanelWidget(QWidget):
         self._unit_rows = []
         rows: dict[int, UnitProgressRow] = {}
         for slot, serial in sorted(units):
-            row = UnitProgressRow(slot, serial, duration_lookup, parent=self)
+            row = UnitProgressRow(
+                slot, serial, duration_lookup, parent=self, label_lookup=label_lookup
+            )
+            row.on_total_changed = self._refresh_total
             self._unit_rows_layout.addWidget(row)
             self._unit_rows.append(row)
             rows[slot] = row
         self._tick_timer.start()
         return rows
+
+    def _refresh_total(self) -> None:
+        """Total bar in a parallel run: the slowest unit still running.
+
+        Every unit used to write its own percentage straight to the bar, so it
+        flickered between them (2 % / 3 % / 2 %...). A unit that has ended no
+        longer holds the bar back.
+        """
+        running = [r.total_percent for r in self._unit_rows if not r.finished]
+        if running:
+            self.progress_total.setValue(min(running))
+        elif self._unit_rows:
+            self.progress_total.setValue(max(r.total_percent for r in self._unit_rows))
 
     def stop_unit_progress(self) -> None:
         """Freeze the rows at their final state; they stay until the next run."""

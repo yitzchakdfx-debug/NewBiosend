@@ -551,10 +551,19 @@ partial run. Do not lock it without revisiting that decision.
 
 The control panel's status group has one row per UUT in the run (1-4, rebuilt
 by `ControlPanelWidget.show_unit_progress`). Each row is a header line —
-`CH<n>` (serial in the tooltip), the current step's short name
-(`short_step_name`: `V/I/P/R <W> <time point>`, `LED`, `Polarity`, `Setup
-300W`…; full name in the tooltip) and a clock of real time since that step
-started — over a thin, text-less progress bar. The name is deliberately *not*
+`CH<n>` (serial in the tooltip), the current step's label and a clock of real time since that step
+started — over a thin, text-less progress bar. The label is the report test
+and point, as in the results table (`MainWindow._step_label`, 2026-10-19):
+`Low Load t1`, `Burn-In t2` (a point's V/I/P/R steps share it), `Low Load
+setup` for a hidden step without `Report`, `LED`. Steps the script does not
+place (the engine's polarity/input checks, cleanup, scripts without `Report`)
+fall back to `short_step_name` (`Polarity`, `Input 24V`, `V 300W 15m`). The
+full step name is in the tooltip.
+A unit that fails (`unit_finished` with `passed` false, not an operator Stop)
+gets `UnitProgressRow.mark_failed()` from `MainWindow._on_unit_finished`: a full
+red bar and a red bold "FAIL" next to its channel (dynamic property
+`failed="true"`, styled in both `.qss` themes), while the other units keep
+running (2026-10-28). The name is deliberately *not*
 drawn inside the bar: there the fill covered it and it was unreadable on the
 station, and fixed label widths cut "CH1" to "CH". When the step has
 `Delay` commands the clock also shows their total (`MainWindow._step_delay_s`),
@@ -573,6 +582,20 @@ time done over the unit's total and is also called during a `Delay`, so the bar
 moves through the long waits. Counting steps showed 36 % one minute into the
 ~32-minute script (7 of 19 steps done, but the four waits hold ~31 minutes);
 now that point reads 4 %, the end of the 15-minute wait ~51 %.
+
+In a parallel run each unit's `progress_total` goes to its own
+`UnitProgressRow.set_total`, and `ControlPanelWidget._refresh_total` shows the
+slowest unit still running (2026-10-19). Every unit used to write the bar
+directly, so it flickered between their values (2 % / 3 % / 2 %); a unit that
+has ended (`on_step("")`) no longer holds the bar back.
+
+The control panel's **Unit** group (UUT type, Part number, Serial number) and the
+**Status > Unit** row are hidden (2026-10-28): in a parallel run they showed one
+unit only, while the CH1-CH4 rows, results headers and live table show all of
+them. The widgets remain as data holders — part number, UUT type and serial
+still feed the run meta, reports and export names. When a script declares no
+`PartNum` (which a run requires), `_reload_script_into_list` shows the Unit
+group again with the part number editable.
 
 ### Results table: why a unit failed
 
