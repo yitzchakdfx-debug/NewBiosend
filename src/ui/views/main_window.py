@@ -314,12 +314,29 @@ class MainWindow(QMainWindow):
     def open_version_manager(self) -> None:
         if not self._can(Capability.MANAGE_VERSIONS):
             return
-        VersionManagerDialog(
+        if self._run_active():
+            # A new version becomes the active test; not under a run.
+            QMessageBox.information(self, "Versions", "Stop the test before managing versions.")
+            return
+        dialog = VersionManagerDialog(
             current_username=str(self._user_info.get("username", "")),
             script_manager=self._script_manager,
             employee_id=str(self._user_info.get("employee_id", "")),
             parent=self,
-        ).exec()
+        )
+        dialog.exec()
+        if dialog.created_version_id is None:
+            return
+        rec = DatabaseManager().get_test_version(dialog.created_version_id)
+        if rec is None:
+            return  # created and deleted again in the same session
+        # Like the Limits editor: the version just stored is what runs next.
+        if self._activate_catalog_content(
+            str(rec["test_name"]), str(rec["version_name"]), str(rec["uut_type"]), str(rec["test_content"])
+        ):
+            QMessageBox.information(
+                self, "Versions", f"Active test is now {rec['test_name']} {rec['version_name']}."
+            )
 
     def open_audit_viewer(self) -> None:
         if not self._can(Capability.VIEW_AUDIT_LOG):

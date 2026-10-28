@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 from config import UUT_TYPES
 from logic.database_manager import DatabaseManager
 from logic.script_manager import ScriptManager
-from ui.views.script_editor import ScriptEditorDialog
+from ui.views.script_editor import ScriptEditorDialog, confirm_script
 
 
 def _next_import_version_name(db: DatabaseManager, test_name: str) -> str:
@@ -84,6 +84,9 @@ class VersionManagerDialog(QDialog):
         self._script_manager = script_manager
         self._user = current_username.strip()
         self._employee_id = employee_id.strip()
+        #: Id of the last version this dialog stored; the main window makes it
+        #: the active test when the dialog closes.
+        self.created_version_id: int | None = None
         self.setWindowTitle("Product Version Manager")
         self.resize(920, 480)
 
@@ -150,6 +153,33 @@ class VersionManagerDialog(QDialog):
         data = it.data(Qt.ItemDataRole.UserRole)
         return int(data) if data is not None else None
 
+    def _ask_version_name(self, test_name: str, prompt: str) -> str | None:
+        """Ask until the name is valid and free; None if the user cancels.
+
+        A taken or invalid name asks again with the typed text kept, so a long
+        edit is never lost to a name clash.
+        """
+        text = _next_import_version_name(self._db, test_name)
+        while True:
+            name, ok = QInputDialog.getText(self, "New Version Name", prompt, text=text)
+            if not ok:
+                return None
+            text = name
+            try:
+                clean = ScriptManager.validate_version_name(name)
+            except ValueError as exc:
+                QMessageBox.warning(self, "Invalid Name", str(exc))
+                continue
+            if self._db.version_exists(test_name, clean):
+                QMessageBox.warning(
+                    self,
+                    "Name taken",
+                    f"Version {clean!r} already exists for test {test_name!r}.\n"
+                    "Enter another name.",
+                )
+                continue
+            return clean
+
     def _populate(self) -> None:
         rows = self._db.list_test_versions()
         self._table.setRowCount(0)
@@ -178,6 +208,8 @@ class VersionManagerDialog(QDialog):
         except OSError as exc:
             QMessageBox.critical(self, "Import", str(exc))
             return
+        if not confirm_script(self, self._script_manager, raw):
+            return
         meta = ImportTestMetaDialog(src.stem, parent=self)
         if meta.exec() != QDialog.DialogCode.Accepted:
             return
@@ -188,7 +220,7 @@ class VersionManagerDialog(QDialog):
             return
         ver = _next_import_version_name(self._db, tname)
         try:
-            self._db.add_test_version(tname, uut, ver, raw, self._user)
+            self.created_version_id = self._db.add_test_version(tname, uut, ver, raw, self._user)
         except Exception as exc:
             QMessageBox.warning(self, "Import Failed", str(exc))
             return
@@ -234,25 +266,10 @@ class VersionManagerDialog(QDialog):
         except OSError as exc:
             QMessageBox.critical(self, "Update from .tst", str(exc))
             return
-        new_ver, ok = QInputDialog.getText(
-            self,
-            "New Version",
-            "Enter new version name:",
-            text="V1.x",
-        )
-        if not ok:
+        if not confirm_script(self, self._script_manager, raw):
             return
-        try:
-            new_ver = ScriptManager.validate_version_name(new_ver)
-        except ValueError as exc:
-            QMessageBox.warning(self, "Invalid Name", str(exc))
-            return
-        if self._db.version_exists(test_name, new_ver):
-            QMessageBox.warning(
-                self,
-                "Update from .tst",
-                f"Version {new_ver!r} already exists for test {test_name!r}.",
-            )
+        new_ver = self._ask_version_name(test_name, "Enter new version name:")
+        if new_ver is None:
             return
         prior_conn = ""
         prior_id = self._selected_id()
@@ -261,7 +278,7 @@ class VersionManagerDialog(QDialog):
             if prior is not None:
                 prior_conn = str(prior.get("connection_params", "") or "")
         try:
-            self._db.add_test_version(
+            self.created_version_id = self._db.add_test_version(
                 test_name,
                 uut_type,
                 new_ver,
@@ -334,37 +351,23 @@ class VersionManagerDialog(QDialog):
             return
         tname = str(rec["test_name"]).strip()
         uut = str(rec["uut_type"]).strip()
-        dlg = ScriptEditorDialog(self._script_manager, parent=self)
-        dlg.load_catalog_version(
-            tname,
-            str(rec["version_name"]),
-            str(rec["test_content"]),
-        )
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-        body = dlg.result_text()
-        new_ver, ok = QInputDialog.getText(
-            self,
-            "New Version Name",
-            "Enter a new unique version name (the selected row will not be overwritten):",
-            text="V1.1",
-        )
-        if not ok:
-            return
-        try:
-            new_ver = ScriptManager.validate_version_name(new_ver)
-        except ValueError as exc:
-            QMessageBox.warning(self, "Invalid Name", str(exc))
-            return
-        if self._db.version_exists(tname, new_ver):
-            QMessageBox.warning(
-                self,
-                "Edit",
-                f"Version {new_ver!r} already exists for test {tname!r}.",
+        body = str(rec["test_content"])
+        edited = False
+        while True:
+            dlg = ScriptEditorDialog(self._script_manager, parent=self)
+            dlg.load_catalog_version(tname, str(rec["version_name"]), body, modified=edited)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return  # the editor itself asked before discarding changes
+            body, edited = dlg.result_text(), True
+            new_ver = self._ask_version_name(
+                tname,
+                "Enter a new unique version name (the selected row will not be overwritten):",
             )
-            return
+            if new_ver is not None:
+                break
+            # Name prompt cancelled: back to the editor, the text is kept.
         try:
-            self._db.add_test_version(
+            self.created_version_id = self._db.add_test_version(
                 tname,
                 uut,
                 new_ver,

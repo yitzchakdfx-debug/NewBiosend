@@ -25,6 +25,20 @@ class ScriptParseError(ValueError):
         self.msg = msg
 
 
+#: Commands a step may use: those `ProdigitVisaDriver.execute_command` handles
+#: plus those the engine handles itself (`TestRunnerThread`). Anything else is
+#: accepted by the parser but raises `UnknownCommandError` mid-run, so the
+#: editor warns about it before a version is stored. `setlogic` is left out on
+#: purpose: only the simulator knows it. Keep in sync with both.
+KNOWN_COMMANDS: frozenset[str] = frozenset({
+    "getid", "readinput", "checkpolarity", "readchannel", "setmode", "getmode",
+    "loadon", "loadoff", "getload", "setcurrent", "getcurrent", "measvoltage",
+    "meascurrent", "measpower", "setresistance", "getresistance", "setvoltage",
+    "getvoltage", "setpower", "getpower", "relay",
+    "delay", "log", "prompt", "promptyesno",
+})
+
+
 class ScriptManager:
     """Discovery, raw read/write, and parsing of `.tst` test-script files."""
 
@@ -87,8 +101,10 @@ class ScriptManager:
         """
         path = Path(path)
         self._validate_suffix(path)
-        text = path.read_text(encoding="utf-8")
+        return self.parse_text(path.read_text(encoding="utf-8"))
 
+    def parse_text(self, text: str) -> ScriptDocument:
+        """Parse script text (see `load_document`); raises `ScriptParseError`."""
         steps: list[TestStep] = []
         metadata: dict[str, str] = {}
         current: TestStep | None = None
@@ -147,6 +163,40 @@ class ScriptManager:
 
         self._validate_report_directives(steps)
         return ScriptDocument(metadata=metadata, steps=steps)
+
+    def check_text(self, text: str, report_sections: list[str]) -> tuple[str | None, list[str]]:
+        """Check a script before it is stored: (blocking error or None, warnings).
+
+        The error is what `parse_text` would raise when the version is selected
+        (or loaded at startup). Warnings are things that parse but go wrong
+        later: a command no driver knows (fails mid-run) and a `Report` test the
+        PDF template does not list (`report_sections`; empty = not checked).
+        """
+        try:
+            document = self.parse_text(text)
+        except ScriptParseError as exc:
+            if exc.line_no:
+                return f"Line {exc.line_no}: {exc.msg}\n    {exc.line.strip()}", []
+            return exc.msg, []
+        warnings: list[str] = []
+        for step in document.steps:
+            for command in step.commands:
+                name = str(command.get("cmd", ""))
+                if name.lower() not in KNOWN_COMMANDS:
+                    warnings.append(
+                        f"Step '{step.name}': unknown command '{name}' - it will fail during the run."
+                    )
+        if report_sections:
+            missing: list[str] = []
+            for step in document.steps:
+                if step.report_test and step.report_test not in report_sections and step.report_test not in missing:
+                    missing.append(step.report_test)
+            for name in missing:
+                warnings.append(
+                    f"Report test '{name}' is not in the PDF template (Report Templates > "
+                    "test_sections): it will be printed last, with no Expected line."
+                )
+        return None, warnings
 
     @staticmethod
     def _validate_report_directives(steps: list[TestStep]) -> None:

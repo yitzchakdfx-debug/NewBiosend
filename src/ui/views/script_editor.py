@@ -24,6 +24,38 @@ from PySide6.QtWidgets import (
 from logic.script_manager import ScriptManager
 
 
+def confirm_script(parent: QWidget | None, script_manager: ScriptManager, text: str) -> bool:
+    """True if `text` may be stored as a catalog version (asks on warnings).
+
+    A version that does not parse is refused: it would fail when selected, and
+    at the next startup, which opens on the newest version.
+    """
+    try:
+        from logic.report_templates import read_pdf_template
+
+        sections = list(read_pdf_template().get("test_sections") or {})
+    except Exception:
+        sections = []
+    error, warnings = script_manager.check_text(text, sections)
+    if error:
+        QMessageBox.warning(
+            parent,
+            "Test script error",
+            f"This test cannot be saved:\n\n{error}\n\nFix it and save again.",
+        )
+        return False
+    if warnings:
+        answer = QMessageBox.question(
+            parent,
+            "Check the test script",
+            "\n\n".join(warnings) + "\n\nSave anyway?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+    return True
+
+
 class ScriptEditorDialog(QDialog):
     """Edit the raw text of a single `.tst` file."""
 
@@ -105,15 +137,19 @@ class ScriptEditorDialog(QDialog):
         self._set_busy(False, f"Loaded {path.name}.")
 
     def load_catalog_version(
-        self, test_name: str, version_name: str, content: str
+        self, test_name: str, version_name: str, content: str, *, modified: bool = False
     ) -> None:
-        """Load raw script text from DB catalog; Save finishes without writing a file path."""
+        """Load raw script text from DB catalog; Save finishes without writing a file path.
+
+        `modified` reopens text the user already edited, so Cancel still asks
+        before discarding it.
+        """
         self._virtual_edit = True
         self._current_path = None
         self._editor.blockSignals(True)
         self._editor.setPlainText(content)
         self._editor.blockSignals(False)
-        self._dirty = False
+        self._dirty = modified
         self._path_label.setText(
             f"<b>Catalog version:</b> {test_name} / {version_name}<br>"
             "<i>Save creates a new catalog version only (this row is not overwritten).</i>"
@@ -128,6 +164,9 @@ class ScriptEditorDialog(QDialog):
 
     def save_file(self) -> None:
         if self._virtual_edit:
+            # Checked here so a script error leaves the editor open with the text.
+            if not confirm_script(self, self._script_manager, self.result_text()):
+                return
             self._dirty = False
             self._set_busy(False, "")
             self.accept()
