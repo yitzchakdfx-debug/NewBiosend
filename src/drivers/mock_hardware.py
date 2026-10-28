@@ -119,6 +119,9 @@ class MockHardware(BaseDriver):
 
         if cmd == "meascurrent":
             time.sleep(self._rng.uniform(0.05, 0.15))
+            if self._load_on and self._mode == "CR" and self._set_resistance > 0:
+                # Ohm's law, so the engine's post-LOAD ON check sees a real load.
+                return round(24.0 / self._set_resistance + self._rng.uniform(-0.005, 0.005), 4)
             return round(self._set_current + self._rng.uniform(-0.05, 0.05), 3)
 
         if cmd == "measpower":

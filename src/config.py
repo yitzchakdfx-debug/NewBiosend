@@ -99,6 +99,10 @@ PRODIGIT_SET_CURRENT: str = get_str("PRODIGIT_SET_CURRENT", "CC:LOW {value}")
 PRODIGIT_QUERY_CURRENT_SET: str = get_str("PRODIGIT_QUERY_CURRENT_SET", "CC:LOW?")
 PRODIGIT_SET_RESISTANCE: str = get_str("PRODIGIT_SET_RESISTANCE", "CR:HIGH {value}")
 PRODIGIT_QUERY_RESISTANCE_SET: str = get_str("PRODIGIT_QUERY_RESISTANCE_SET", "CR:HIGH?")
+# Optional: selects the active setting level before each resistance write (e.g.
+# "LEV 1"). Empty = not sent. The 3316G holds two CR levels (CR:HIGH / CR:LOW,
+# the latter 60000 ohm on the station); `LEV?` answers 1. Untested as a write.
+PRODIGIT_SET_LEVEL: str = get_str("PRODIGIT_SET_LEVEL", "")
 PRODIGIT_SET_VOLTAGE: str = get_str("PRODIGIT_SET_VOLTAGE", "CV:HIGH {value}")
 PRODIGIT_QUERY_VOLTAGE_SET: str = get_str("PRODIGIT_QUERY_VOLTAGE_SET", "CV:HIGH?")
 PRODIGIT_SET_POWER: str = get_str("PRODIGIT_SET_POWER", "CP:HIGH {value}")

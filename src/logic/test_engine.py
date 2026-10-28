@@ -82,6 +82,23 @@ POLARITY_SETTLE_S = _POLARITY_SETTLE_MS / 1000
 # power are extra queries on the 3300G's single connection, so they are sampled
 # at a gentler rate than the 300 ms monitoring cadence.
 _LIVE_READING_INTERVAL_MS = 1000
+# Gentler rates when several units share the 3300G's one connection (parallel
+# run): four units polling every 300 ms plus a `CHAN n` before each query is
+# tens of commands a second, and the load drops the link under that load.
+# 500 ms is still continuous monitoring (120 checks a minute per unit).
+_SHARED_POLL_S = 0.5
+# After LOAD ON in a step that set a resistance, the channel's current is
+# checked against Ohm's law (I = V / R). Settle first so the load has come up.
+_LOAD_VERIFY_SETTLE_S = 0.3
+_LOAD_VERIFY_TOL = 0.15        # +-15 % of the expected current
+_LOAD_VERIFY_MIN_A = 0.03      # floor for small currents
+_SHARED_LIVE_INTERVAL_S = 2.0
+# After a failed live sample, wait this long before trying again (it used to
+# stop sampling for the rest of the delay, leaving stale values on screen).
+_LIVE_RETRY_S = 5.0
+# Live V/A/W are written to the encrypted log at this rate, per unit, so a run
+# can be checked afterwards for what each load actually drew.
+_LIVE_LOG_INTERVAL_S = 5.0
 
 # Expected time a step takes beyond its `Delay`s (instrument round-trips),
 # used only to weight the Total progress bar. Rough is fine: next to the 1-15
@@ -193,6 +210,8 @@ class TestRunnerThread(QThread):
     #: "V", "A", "W". Partial on purpose — a step that measures only current
     #: updates only that cell — so the receiver merges rather than replaces.
     live_reading = Signal(dict)
+    #: "ok" / "reconnecting" / "down" for the load link (toolbar indicator).
+    link_state = Signal(str)
 
     def __init__(
         self,
@@ -240,6 +259,8 @@ class TestRunnerThread(QThread):
         self._script_manager = script_manager or ScriptManager()
         self._hw: BaseDriver = driver or create_driver()
         self._hw_lock: Lock | None = hw_lock
+        self._live_cache: dict[str, float] = {}
+        self._live_logged_at = 0.0
         self._skip_hw_lifecycle: bool = skip_hw_lifecycle
         # A maintenance run is a diagnostic, not a production test: the
         # station-integrity gates (24 V presence, polarity) would abort it and
@@ -359,14 +380,66 @@ class TestRunnerThread(QThread):
 
     def _hw_execute_raw(self, command: str, args: list[str]) -> float:
         """Execute a hardware command, re-selecting the slot atomically when shared."""
-        if self._hw_lock is not None and self._current_unit is not None:
+        unit = self._current_unit
+        if self._hw_lock is not None and unit is not None:
             with self._hw_lock:
                 self._hw.activate_slot(
-                    self._current_unit.slot_index,
-                    load_serial_number=self._current_unit.load_serial_number,
+                    unit.slot_index,
+                    load_serial_number=unit.load_serial_number,
                 )
                 return self._hw.execute_command(command, args)
         return self._hw.execute_command(command, args)
+
+    def _verify_load(self, ohms: float) -> None:
+        """Check that the channel really draws what `ohms` gives (I = V / R).
+
+        The instrument's own read-back cannot be trusted for this: on the
+        station CH2 answered `CR:HIGH?` with the new 57.6 ohm while drawing the
+        previous run's 20 W (28.8 ohm) — most likely a missed `CHAN n`, so the
+        setting and its read-back both went to another channel. Measuring what
+        the channel does catches that, a stuck value, an inactive level and a
+        load that never switched on. On a mismatch the setup is sent once more;
+        a second mismatch fails the step rather than testing at the wrong load.
+        """
+        unit = self._current_unit
+        ch = f"CH{unit.slot_index}" if unit is not None else "The load"
+
+        def check() -> str | None:
+            """None if the channel draws ~V/R, else a description of what it does."""
+            self.msleep(int(_LOAD_VERIFY_SETTLE_S * 1000))
+            volts = self._hw_execute("measvoltage", [])
+            amps = self._hw_execute("meascurrent", [])
+            expected = volts / ohms
+            if abs(amps - expected) <= max(_LOAD_VERIFY_TOL * expected, _LOAD_VERIFY_MIN_A):
+                return None
+            return (
+                f"{ch} draws {volts * amps:.1f} W ({amps:.3f} A), expected "
+                f"~{volts * expected:.1f} W ({expected:.3f} A at {ohms:g} ohm)"
+            )
+
+        # Measured twice before acting: V and I are two reads, and right after
+        # LOAD ON at 100/300 W the voltage can still be moving between them.
+        def check_twice() -> str | None:
+            detail = check()
+            return check() if detail is not None else None
+
+        detail = check_twice()
+        if detail is None:
+            return
+        self._emit_log("error", f"{detail} - sending the setup again.")
+        self._hw_execute("setmode", ["CR"])
+        self._hw_execute("setresistance", [f"{ohms:g}"])
+        self._hw_execute("loadon", [])
+        detail = check_twice()
+        if detail is not None:
+            raise HardwareError(f"load not as set - {detail}")
+
+    def _on_hw_reconnect(self, slot: int) -> None:
+        self._emit_log(
+            "error",
+            f"Lost the connection to the electronic load - reconnected and "
+            f"selected CH{slot} again.",
+        )
 
     @staticmethod
     def step_delay_s(step: TestStep) -> float:
@@ -402,14 +475,27 @@ class TestRunnerThread(QThread):
         self.live_reading.emit(
             {"slot": unit.slot_index, "serial": unit.serial_number, **values}
         )
+        self._live_cache.update(values)
+        now = time.monotonic()
+        if self._secure_log is not None and now - self._live_logged_at >= _LIVE_LOG_INTERVAL_S:
+            self._live_logged_at = now
+            try:
+                self._secure_log.log(
+                    "live",
+                    {"serial_number": unit.serial_number, "slot": unit.slot_index,
+                     **self._live_cache},
+                )
+            except Exception:
+                pass
 
     def _sample_live_readings(self, *, include_voltage: bool) -> bool:
         """Read current and power (and voltage if asked) for the live pane.
 
         Display only: these values never decide a verdict, so a failed read is
         swallowed rather than failing the step. Returns False on a failure so the
-        caller can stop sampling — the driver has already spent its reconnect
-        budget by then, and retrying every second would stretch the delay.
+        caller can back off (`_LIVE_RETRY_S`) — the driver has already spent its
+        reconnect budget by then, and retrying every second would stretch the
+        delay.
         """
         commands = ["meascurrent", "measpower"]
         if include_voltage:
@@ -425,6 +511,12 @@ class TestRunnerThread(QThread):
         return True
 
     def run(self) -> None:
+        # Hooked here, not in __init__: recording an LED failure builds a runner
+        # that must never touch the driver.
+        if hasattr(self._hw, "on_reconnect"):
+            self._hw.on_reconnect = self._on_hw_reconnect  # type: ignore[attr-defined]
+        if hasattr(self._hw, "on_link_state"):
+            self._hw.on_link_state = self.link_state.emit  # type: ignore[attr-defined]
         self.progress_total.emit(0)
         self.progress_test.emit(0)
         self.current_test.emit("")
@@ -1221,6 +1313,7 @@ class TestRunnerThread(QThread):
         self._current_step = step
         self._fail_note = ""
 
+        step_ohms: float | None = None
         for idx, cmd in enumerate(step.commands, start=1):
             if self._stop_requested:
                 return False, last_measurement
@@ -1228,13 +1321,20 @@ class TestRunnerThread(QThread):
                 result = self._execute_command(cmd)
                 if result is not None:
                     last_measurement = result
+                name = str(cmd["cmd"]).lower()
                 # Record that the script itself set this band's resistance, so
                 # later measurement steps in the same band inherit it instead of
                 # being forced to the .env fallback.
-                if str(cmd["cmd"]).lower() == "setresistance":
+                if name == "setresistance":
                     band = self._band_for_step(step)
                     if band:
                         self._tst_set_bands.add(band)
+                    try:
+                        step_ohms = float((cmd.get("args") or [""])[0])
+                    except (TypeError, ValueError):
+                        step_ohms = None
+                elif name == "loadon" and step_ohms:
+                    self._verify_load(step_ohms)
             except _MonitorOutOfRange as exc:
                 # The monitored voltage left its band mid-delay. Report the
                 # offending reading as this step's measurement so the results
@@ -1448,12 +1548,15 @@ class TestRunnerThread(QThread):
             monitor_max = float(args[2]) if len(args) >= 3 else None
             # Poll/monitor cadence during the wait. 300 ms keeps continuous
             # voltage monitoring responsive without flooding the load's comms
-            # link with queries over long burn-in delays.
-            chunk_s = 0.3
+            # link with queries over long burn-in delays; 500 ms when units
+            # share the connection (see _SHARED_POLL_S).
+            shared = self._hw_lock is not None
+            chunk_s = _SHARED_POLL_S if shared else 0.3
             monitored = monitor_min is not None and monitor_max is not None
-            live_interval_s = _LIVE_READING_INTERVAL_MS / 1000
-            last_live = float("-inf")  # sample on the first poll
-            live_ok = True
+            live_interval_s = _SHARED_LIVE_INTERVAL_S if shared else _LIVE_READING_INTERVAL_MS / 1000
+            live_warned = False
+            live_retry_at = 0.0
+            self._live_cache = {}  # no A/W from the previous step in the log
             # Timed against the wall clock, not by counting polls. Counting
             # added a fixed 300 ms per poll but ignored the time each poll's
             # instrument queries took, so a "30 min" burn-in ran 10-20 % long
@@ -1464,6 +1567,9 @@ class TestRunnerThread(QThread):
             start = time.monotonic()
             deadline = start + total_ms / 1000
             next_poll = start
+            # First sample one interval in, not right after LOAD ON: a load that
+            # has not come up yet reads 0 W.
+            last_live = start
             while not self._stop_requested:
                 now = time.monotonic()
                 if now >= deadline:
@@ -1504,9 +1610,19 @@ class TestRunnerThread(QThread):
                         )
                 # After the monitoring check, so the extra queries never delay
                 # a trip. Voltage is skipped when monitoring just read it.
-                if live_ok and time.monotonic() - last_live >= live_interval_s:
-                    last_live = time.monotonic()
-                    live_ok = self._sample_live_readings(include_voltage=not monitored)
+                now = time.monotonic()
+                if now >= live_retry_at and now - last_live >= live_interval_s:
+                    last_live = now
+                    if not self._sample_live_readings(include_voltage=not monitored):
+                        live_retry_at = now + _LIVE_RETRY_S
+                        if not live_warned:
+                            live_warned = True
+                            slot = self._current_unit.slot_index if self._current_unit else "?"
+                            self._emit_log(
+                                "error",
+                                f"Live readings unavailable for CH{slot}; "
+                                f"retrying every {_LIVE_RETRY_S:g} s.",
+                            )
             return None
 
         if name == "log":

@@ -637,11 +637,18 @@ only one — so no new connection is opened:
 
 * every `measvoltage`/`meascurrent`/`measpower` a script step executes is
   forwarded;
-* a monitored `Delay` forwards each 300 ms voltage poll, and every
-  `_LIVE_READING_INTERVAL_MS` (1 s) also samples current and power (and voltage
+* a monitored `Delay` forwards each 300 ms voltage poll (500 ms,
+  `_SHARED_POLL_S`, when units share the connection in a parallel run), and
+  every `_LIVE_READING_INTERVAL_MS` (1 s; 2 s shared) also samples current and power (and voltage
   on an unmonitored delay), **after** the monitoring check so it never delays a
-  trip. These samples are display-only: a failed read is swallowed and stops
-  sampling for the rest of that delay; it never fails the step.
+  trip. These samples are display-only and never fail the step. The first one
+  is taken one interval into the delay (right after LOAD ON a load that has not
+  come up reads 0 W); a failed one is reported once per delay ("Live readings
+  unavailable for CHn") and retried every `_LIVE_RETRY_S` (5 s) — it used to stop
+  sampling silently, leaving stale values on screen.
+* every `_LIVE_LOG_INTERVAL_S` (5 s) each unit's latest V/A/W are written to the
+  encrypted log under category `live`, so a run can be checked afterwards for
+  what each load actually drew.
 
 ---
 

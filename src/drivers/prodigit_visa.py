@@ -12,7 +12,7 @@ import socket
 import struct
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from config import (
     PRODIGIT_QUERY_CURRENT,
@@ -34,6 +34,7 @@ from config import (
     PRODIGIT_SET_MODE,
     PRODIGIT_SET_POWER,
     PRODIGIT_SET_RELAY,
+    PRODIGIT_SET_LEVEL,
     PRODIGIT_SET_RESISTANCE,
     PRODIGIT_SET_VOLTAGE,
     PRODIGIT_VISA_BACKEND,
@@ -197,6 +198,16 @@ class ProdigitVisaDriver(BaseDriver):
         self._reconnect_on_error = reconnect_on_error
         self._active_slot = 1
         self._load_serial = ""
+        #: Called with the active slot after each reconnect, so the engine can
+        #: say so in the run log (the driver has no log of its own).
+        self.on_reconnect: Callable[[int], None] | None = None
+        #: Times the reconnect budget ran out and an I/O error was let through:
+        #: the link was lost and not restored. The engine compares it per unit
+        #: to drop that unit's report (an instrument fault, not a UUT result).
+        self.link_lost_count = 0
+        #: Called with "reconnecting" / "ok" / "down" as the link fails, comes
+        #: back or is given up on — drives the toolbar's load-link indicator.
+        self.on_link_state: Callable[[str], None] | None = None
         self._timeout_ms = (
             int(timeout_ms)
             if timeout_ms
@@ -398,19 +409,29 @@ class ProdigitVisaDriver(BaseDriver):
             # Write, let the load settle, then read back to confirm. If the
             # device still reports the old value, re-write and check again
             # before failing — this absorbs the load's apply/re-range latency.
-            actual: float | None = None
+            if PRODIGIT_SET_LEVEL.strip():
+                self._write(PRODIGIT_SET_LEVEL)
+            if not PRODIGIT_QUERY_RESISTANCE_SET.strip():
+                # No read-back configured for this instrument: trust the write.
+                self._write(PRODIGIT_SET_RESISTANCE, value=resistance)
+                return expected
+            actual: float | str | None = None
             for _ in range(_RESISTANCE_VERIFY_ATTEMPTS):
                 self._write(PRODIGIT_SET_RESISTANCE, value=resistance)
                 time.sleep(_RESISTANCE_SETTLE_S)
                 try:
                     actual = _parse_float(self._query_text(PRODIGIT_QUERY_RESISTANCE_SET))
-                except Exception:
-                    # Device can't report the set value back — trust the write.
-                    return expected
+                except Exception as exc:
+                    # A failed read-back is a failed attempt, not a success. It
+                    # used to "trust the write", which is how CH3 kept the
+                    # previous run's 28.8 ohm through a 10 W step unnoticed.
+                    actual = f"no reply ({exc})"
+                    continue
                 if abs(actual - expected) / max(expected, 1e-6) <= 0.05:
                     return expected
             raise RuntimeError(
-                f"Resistance mismatch: sent {expected}Ω, device reports {actual}Ω"
+                f"Resistance not confirmed on CH{self._active_slot}: sent {expected}Ω, "
+                f"device reports {actual}"
             )
 
         if cmd == "getresistance":
@@ -487,6 +508,7 @@ class ProdigitVisaDriver(BaseDriver):
                 if self._reconnecting or time.monotonic() >= deadline:
                     raise
                 self._attempt_reconnect()
+                self._reselect_slot()
                 time.sleep(_RECONNECT_RETRY_DELAY_S)
 
     def _attempt_reconnect(self) -> None:
@@ -503,6 +525,35 @@ class ProdigitVisaDriver(BaseDriver):
                 pass
         finally:
             self._reconnecting = False
+
+    def _notify_link(self, state: str) -> None:
+        if self.on_link_state is not None:
+            try:
+                self.on_link_state(state)
+            except Exception:
+                pass
+
+    def _reselect_slot(self) -> None:
+        """Select the active channel again on a fresh connection.
+
+        The retried op is only the command itself. Without this, a reconnect
+        mid-run sent it to whatever channel the mainframe had selected: on the
+        station a 4-unit run left CH3 at the previous run's 28.8 ohm, because
+        its `CR:HIGH 57.6` (and the read-back that "confirmed" it) went to
+        another channel.
+        """
+        template = PRODIGIT_SELECT_SLOT.strip()
+        command = _format_template(template, slot=self._active_slot, load_serial=self._load_serial)
+        try:
+            if command and self._ctx is not None:
+                self._ctx.resource.write(command)
+        except Exception:
+            pass  # the retry that follows fails and reconnects again
+        if self.on_reconnect is not None:
+            try:
+                self.on_reconnect(self._active_slot)
+            except Exception:
+                pass
 
     def _query_text(self, template: str, **values: Any) -> str:
         command = _format_template(
