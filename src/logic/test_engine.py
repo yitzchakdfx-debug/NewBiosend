@@ -526,6 +526,7 @@ class TestRunnerThread(QThread):
                 try:
                     if not self._hw.connect():
                         self._emit_log("error", "Hardware connect() returned False; aborting.")
+                        self.link_state.emit("down")
                         return
                 except HardwareError as exc:
                     # Retry before giving up: an unplugged/late-plugged LAN cable
@@ -533,7 +534,10 @@ class TestRunnerThread(QThread):
                     # after the link comes back. Bounded so a genuinely absent
                     # instrument fails fast instead of hanging the operator.
                     if not self._retry_connect(exc):
+                        self.link_state.emit("down")
                         return
+                if hasattr(self._hw, "on_link_state"):
+                    self.link_state.emit("ok")
 
             steps = self._load_selected_steps()
             if steps is None:
@@ -567,6 +571,7 @@ class TestRunnerThread(QThread):
                         "passed": report.overall_result == "PASS",
                         "report_generated": report.should_generate_report,
                         "aborted": report.aborted_by_operator,
+                        "link_lost": report.aborted_link_lost,
                     }
                 )
         finally:
@@ -709,10 +714,23 @@ class TestRunnerThread(QThread):
         dissipating test power because of which branch happened to be taken, so
         the shutdown lives here rather than in each exit.
         """
+        self._unit_link_mark = getattr(self._hw, "link_lost_count", 0)
         try:
-            return self._run_single_unit_inner(unit, unit_index, total_units, steps)
+            report = self._run_single_unit_inner(unit, unit_index, total_units, steps)
+            if self._link_lost():
+                report.aborted_link_lost = True
+                self._emit_log(
+                    "error",
+                    f"{unit.serial_number}: communication with the load was lost - "
+                    "not saved, no report.",
+                )
+            return report
         finally:
             self._force_load_off(unit)
+
+    def _link_lost(self) -> bool:
+        """Whether the load's link was lost (and not restored) during this unit."""
+        return getattr(self._hw, "link_lost_count", 0) > getattr(self, "_unit_link_mark", 0)
 
     def _backfill_skipped(
         self,
@@ -1300,6 +1318,8 @@ class TestRunnerThread(QThread):
         # it. See roles.py: Maintenance deliberately lacks ARCHIVE_RUN.
         if not self._persist_runs:
             return
+        if self._link_lost():
+            return  # an instrument fault, not a UUT result: see aborted_link_lost
         try:
             self._db.save_run(record)
         except Exception as exc:

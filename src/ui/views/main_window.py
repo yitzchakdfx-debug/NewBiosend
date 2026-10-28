@@ -43,7 +43,7 @@ import shiboken6
 
 from config import LOAD_SERIALS, SHOW_NIGHT_MODE, SHOW_SEARCH_BAR
 from drivers.base_driver import BaseDriver, HardwareError
-from drivers.factory import create_driver, resolve_station_config
+from drivers.factory import create_driver, is_simulated, resolve_station_config, resolved_visa_resource
 from logic.database_manager import DatabaseManager
 from logic.report_templates import read_pdf_template
 from logic.test_groups import TestGroup, always_step_names, build_test_groups
@@ -67,6 +67,7 @@ from ui.views.test_result_dialog import TestResultDialog
 from ui.views.user_management_dialog import UserManagementDialog
 from ui.views.version_manager_dialog import VersionManagerDialog
 from ui.widgets.control_panel import ControlPanelWidget, UnitProgressRow
+from ui.widgets.link_led import LinkLed, PingProbe, host_from_visa
 from ui.widgets.result_row_delegate import ResultRowDelegate
 from ui.widgets.wrap_item_delegate import WrapItemDelegate
 from version import __version__
@@ -596,6 +597,24 @@ class MainWindow(QMainWindow):
         ribbon.addSpacing(12)
         ribbon.addWidget(self.label_active_script)
 
+        # Load-link indicator. Between runs it is fed by an ICMP ping (never a
+        # TCP connection: the 3300G takes only one, and the scan or the next run
+        # needs it); during a run by the driver's own link events.
+        self.link_led = LinkLed(self)
+        ribbon.addSpacing(24)
+        ribbon.addWidget(self.link_led, 0, Qt.AlignmentFlag.AlignVCenter)
+        self._link_host = host_from_visa(resolved_visa_resource())
+        #: A load-off could not be confirmed (link lost / failed). The next
+        #: successful ping switches every channel off — see _on_ping_result.
+        self._loads_unconfirmed = False
+        self._ping = PingProbe(self)
+        self._ping.result.connect(self._on_ping_result)
+        self._link_timer = QTimer(self)
+        self._link_timer.setInterval(5000)
+        self._link_timer.timeout.connect(self._probe_link)
+        self._link_timer.start()
+        QTimer.singleShot(0, self._probe_link)
+
         ribbon.addStretch()
 
         self.lbl_brand_icon = QLabel()
@@ -961,6 +980,14 @@ class MainWindow(QMainWindow):
             self.append_trace(
                 f"{reports[-1].unit.serial_number}: stopped by operator - "
                 "no report saved."
+            )
+            return
+        if reports[-1].aborted_link_lost:
+            self._last_run_meta = None
+            self._last_run_rows = []
+            self.append_trace(
+                f"{reports[-1].unit.serial_number}: communication with the load "
+                "was lost - no report saved."
             )
             return
         meta, rows = th.report_snapshot()
@@ -1393,6 +1420,7 @@ class MainWindow(QMainWindow):
         thread.unit_alert.connect(self._on_unit_alert)
         thread.load_shutdown_failed.connect(self._on_load_shutdown_failed)
         thread.live_reading.connect(self._on_live_reading)
+        thread.link_state.connect(self._on_link_state)
         thread.prompt_request.connect(self._on_prompt_request)
         thread.prompt_yesno_request.connect(self._on_prompt_yesno_request)
         thread.script_log.connect(self._on_script_log)
@@ -1593,7 +1621,71 @@ class MainWindow(QMainWindow):
         self.results_table.insertRow(row)
         self._set_unit_header_row(row, serial_number, index, total, position_label)
 
+    def _run_active(self) -> bool:
+        return (self.test_thread is not None and self._is_running(self.test_thread)) or any(
+            self._is_running(t) for t in self._parallel_threads
+        )
+
+    def _probe_link(self) -> None:
+        """Between runs: ping the load (a run reports the real link itself)."""
+        if self._run_active():
+            return
+        if is_simulated():
+            self.link_led.set_state("sim", "HARDWARE_BACKEND is a simulator")
+        elif not self._link_host:
+            self.link_led.set_state("unknown", "No network address for the load (USB or auto-discovery)")
+        else:
+            self._ping.probe(self._link_host)
+
+    def _on_ping_result(self, ok: bool) -> None:
+        if self._run_active():
+            return  # a run started meanwhile; its own link events win
+        self.link_led.set_state("ok" if ok else "down", f"Load at {self._link_host} (ping)")
+        if ok and self._loads_unconfirmed:
+            self._loads_off_after_reconnect()
+
+    def _loads_off_after_reconnect(self) -> None:
+        """The link is back after a loss: switch every channel off (Req 26).
+
+        Set by a failed load-off or a lost link. Retried on each successful
+        ping until it works; only success is announced, so a still-flaky link
+        does not pop a dialog every five seconds.
+        """
+        failures = self._switch_all_loads_off()
+        if failures:
+            self.append_trace(
+                "Link back, but the load-off did not complete yet - retrying: "
+                + "; ".join(failures)
+            )
+            return
+        self._loads_unconfirmed = False
+        self._record_trace("info", "Load communication restored - all channels switched OFF and verified.")
+        try:
+            DatabaseManager().log_audit_action(
+                "Load communication restored - all channels switched off",
+                username=str(self._user_info.get("username", "")),
+                employee_id=str(self._user_info.get("employee_id", "")),
+            )
+        except Exception:
+            pass
+        QMessageBox.information(
+            self,
+            "Load communication restored",
+            "Communication with the electronic load is back - all channels "
+            "were switched OFF and verified.",
+        )
+
+    def _on_link_state(self, state: str) -> None:
+        self.link_led.set_state(state, f"Load at {self._link_host or 'VISA'} (during the run)")
+
     def _on_unit_finished(self, payload: dict) -> None:
+        if payload.get("link_lost"):
+            self._loads_unconfirmed = True
+            # Lost the load mid-test: no verdict, not counted, no report.
+            row = self._unit_rows.get(int(payload.get("slot_index", 0) or 0))
+            if row is not None:
+                row.mark_failed("NO COMM")
+            return
         if payload.get("aborted"):
             return  # stopped by the operator: neither a pass nor a fail
         passed = bool(payload.get("passed"))
@@ -1620,6 +1712,7 @@ class MainWindow(QMainWindow):
         cannot reach, so the operator has to act physically.
         """
         self._record_trace("error", reason)
+        self._loads_unconfirmed = True
         QMessageBox.critical(
             self,
             "LOAD MAY STILL BE ON",
@@ -1781,6 +1874,23 @@ class MainWindow(QMainWindow):
         the window closes (this runs from closeEvent while it is still shown):
         a silent trace line here is how loads were once left on unnoticed.
         """
+        failures = self._switch_all_loads_off()
+        if not failures:
+            self.append_trace("Load off verified on exit (all channels).")
+            return
+        detail = "\n".join(failures)
+        self.append_trace(f"Could not verify load off on exit:\n{detail}")
+        QMessageBox.critical(
+            self,
+            "LOAD MAY STILL BE ON",
+            "Could not confirm that every electronic load channel is OFF:\n\n"
+            f"{detail}\n\n"
+            "If a UUT is connected, switch the load off at its front panel or "
+            "disconnect the UUT.",
+        )
+
+    def _switch_all_loads_off(self) -> list[str]:
+        """LOAD OFF on every channel, each read back. Returns the failures ([] = all off)."""
         failures: list[str] = []
         try:
             # Short timeout and no identity probe: the window is closing, so a
@@ -1806,20 +1916,7 @@ class MainWindow(QMainWindow):
                 driver.disconnect()
         except Exception as exc:
             failures.append(f"instrument not reachable: {exc}")
-
-        if not failures:
-            self.append_trace("Load off verified on exit (all channels).")
-            return
-        detail = "\n".join(failures)
-        self.append_trace(f"Could not verify load off on exit:\n{detail}")
-        QMessageBox.critical(
-            self,
-            "LOAD MAY STILL BE ON",
-            "Could not confirm that every electronic load channel is OFF:\n\n"
-            f"{detail}\n\n"
-            "If a UUT is connected, switch the load off at its front panel or "
-            "disconnect the UUT.",
-        )
+        return failures
 
     def logout(self) -> None:
         """Closes the main window and signals the application to restart the login flow."""
@@ -2155,7 +2252,10 @@ class MainWindow(QMainWindow):
         shared_driver = create_driver()
         try:
             shared_driver.connect()
+            if hasattr(shared_driver, "on_link_state"):
+                self.link_led.set_state("ok", f"Load at {self._link_host or 'VISA'} (run started)")
         except HardwareError as exc:
+            self.link_led.set_state("down", f"Could not connect: {exc}")
             # No silent demo-mode fallback: substituting MockHardware here would
             # report a healthy 24 V on every channel and archive the result as a
             # real production run. Abort and tell the operator instead.
@@ -2216,6 +2316,7 @@ class MainWindow(QMainWindow):
             th.unit_alert.connect(self._on_unit_alert)
             th.load_shutdown_failed.connect(self._on_load_shutdown_failed)
             th.live_reading.connect(self._on_live_reading)
+            th.link_state.connect(self._on_link_state)
             th.prompt_request.connect(self._on_prompt_request)
             th.prompt_yesno_request.connect(self._on_prompt_yesno_request)
             th.script_log.connect(self._on_script_log)
@@ -2256,6 +2357,7 @@ class MainWindow(QMainWindow):
 
         overall_passed = True
         stopped = self._stopped_serials(self._parallel_threads)
+        lost = self._link_lost_serials(self._parallel_threads)
         total_units = len(self._parallel_threads)
         original_thread = self.test_thread
         for th in self._parallel_threads:
@@ -2282,12 +2384,14 @@ class MainWindow(QMainWindow):
             DatabaseManager().log_audit_action(
                 "Test run stopped by operator (parallel)"
                 if stopped
+                else "Test run ended - load communication lost (parallel)"
+                if lost
                 else "Test run completed (parallel)",
                 username=str(self._user_info.get("username", "")),
                 employee_id=str(self._user_info.get("employee_id", "")),
                 details=(
-                    f"not reported={stopped}"
-                    if stopped
+                    f"not reported={stopped + lost}"
+                    if stopped or lost
                     else f"overall={'PASS' if overall_passed else 'FAIL'}"
                 ),
             )
@@ -2308,7 +2412,11 @@ class MainWindow(QMainWindow):
             self.control_panel.edit_part_number.setReadOnly(True)
         self._unlock_pre_test_fields()
         self.append_trace("All parallel sequences complete.")
-        if stopped:
+        if lost:
+            self._show_link_lost_message(
+                lost, some_completed=len(lost) + len(stopped) < total_units
+            )
+        elif stopped:
             self._show_stopped_message(
                 stopped, some_completed=len(stopped) < total_units
             )
@@ -2324,6 +2432,7 @@ class MainWindow(QMainWindow):
         self.control_panel.stop_unit_progress()
 
         stopped = self._stopped_serials([th])
+        lost = self._link_lost_serials([th])
         nothing_tested = not th.report_snapshots()
         overall_passed = False
         try:
@@ -2338,6 +2447,8 @@ class MainWindow(QMainWindow):
                     action = "Test run ended before any unit was tested"
                 elif stopped:
                     action = "Test run stopped by operator"
+                elif lost:
+                    action = "Test run ended - load communication lost"
                 else:
                     action = "Test run completed"
                 DatabaseManager().log_audit_action(
@@ -2347,7 +2458,7 @@ class MainWindow(QMainWindow):
                     details=(
                         f"overall={meta.get('overall_result', '?')} "
                         f"script={meta.get('test_program_name', '')}"
-                        + (f" not reported={stopped}" if stopped else "")
+                        + (f" not reported={stopped + lost}" if stopped or lost else "")
                     ),
                 )
             except Exception:
@@ -2372,6 +2483,8 @@ class MainWindow(QMainWindow):
                 "The run ended before any unit was tested (for example, the "
                 "electronic load did not respond).\n\nNo report was generated.",
             )
+        elif lost:
+            self._show_link_lost_message(lost)
         elif stopped:
             self._show_stopped_message(stopped)
         else:
@@ -2391,6 +2504,29 @@ class MainWindow(QMainWindow):
             for report in th.report_snapshots()
             if report.aborted_by_operator
         ]
+
+    @staticmethod
+    def _link_lost_serials(threads: list[TestRunnerThread]) -> list[str]:
+        """Serials of units cut short by a lost (and not restored) load link."""
+        return [
+            report.unit.serial_number
+            for th in threads
+            for report in th.report_snapshots()
+            if report.aborted_link_lost
+        ]
+
+    def _show_link_lost_message(self, serials: list[str], *, some_completed: bool = False) -> None:
+        """Shown instead of the PASS/FAIL banner when the load's link was lost."""
+        if self._closing:
+            return
+        text = (
+            "Communication with the electronic load was lost and could not be "
+            f"restored.\n\nNo report was saved for: {', '.join(serials)}.\n\n"
+            "Check the load's cable and power, then test these units again."
+        )
+        if some_completed:
+            text += "\n\nUnits that finished before were reported normally."
+        QMessageBox.warning(self, "Load communication lost", text)
 
     def _show_stopped_message(self, serials: list[str], *, some_completed: bool = False) -> None:
         """Shown instead of the PASS/FAIL banner: a stopped run has no verdict."""

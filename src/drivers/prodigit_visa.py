@@ -499,14 +499,25 @@ class ProdigitVisaDriver(BaseDriver):
         if not self._reconnect_on_error:
             return op()  # scan mode: a failed read is expected, fail it fast
         deadline = time.monotonic() + _RECONNECT_BUDGET_S
+        retried = False
         while True:
             try:
-                return op()
+                result = op()
+                if retried:
+                    self._notify_link("ok")
+                return result
             except Exception:
                 # Don't recurse while a reconnect's own probe I/O is running,
                 # and give up once the reconnect budget is exhausted.
-                if self._reconnecting or time.monotonic() >= deadline:
+                if self._reconnecting:
                     raise
+                if time.monotonic() >= deadline:
+                    self.link_lost_count += 1
+                    self._notify_link("down")
+                    raise
+                if not retried:
+                    self._notify_link("reconnecting")
+                retried = True
                 self._attempt_reconnect()
                 self._reselect_slot()
                 time.sleep(_RECONNECT_RETRY_DELAY_S)

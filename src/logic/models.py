@@ -156,6 +156,10 @@ class BatchUnitReport:
     #: The operator pressed Stop before this unit's tests finished. Such a run is
     #: neither saved to the database nor reported (it is not a unit failure).
     aborted_by_operator: bool = False
+    #: Communication with the electronic load was lost mid-test and the
+    #: reconnect did not restore it. Like a Stop: neither saved nor reported —
+    #: an instrument fault says nothing about the UUT.
+    aborted_link_lost: bool = False
     #: Steps actually run vs. steps the script defines. Maintenance/Admin may untick
     #: steps before a run (`Capability.SELECT_STEPS`), and deselected steps are
     #: filtered out before execution — so unlike a step skipped *after* a

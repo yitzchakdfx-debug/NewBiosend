@@ -357,6 +357,80 @@ without `CHAN?`, `PRODIGIT_QUERY_SLOT` empty) fall back to the identical-voltage
 echo rule. The rule had hidden real channels: one supply wired to two loads read
 24.373 V and 24.374 V, and the second channel was dropped (3 of 4 detected).
 
+**Run commands land on the right channel** (2026-10-19). A 4-unit run left CH3
+at the previous run's 28.8 ohm through a 10 W step, and an earlier one showed
+loads 1/2/4 unloaded. The engine selects `CHAN n` before every command under the
+shared lock, but the driver's `_io_with_resilience` retried a failed command
+after a reconnect *without* re-selecting, so it (and the resistance read-back
+that "confirmed" it) went to whatever channel the mainframe had. Now:
+`_reselect_slot` sends `CHAN n` again after every reconnect and reports it via
+`driver.on_reconnect` (the run log shows "Lost the connection to the electronic
+load - reconnected and selected CHn again"). `setresistance` no longer "trusts
+the write" when its `CR:HIGH?` read-back fails: that counts as a failed attempt,
+and after `_RESISTANCE_VERIFY_ATTEMPTS` the step fails ("Resistance not
+confirmed on CHn"). That trust is how CH3's stale value passed unnoticed.
+
+A `CHAN?` check before every state change (`setmode`/`setresistance`/`loadon`/
+`loadoff`) was tried the same day and removed: measured from the log, the
+10 W -> 20 W transition went from 2-3 s to 9-15 s, with a reconnect during the
+Setup steps in every run — the 3300G does not reliably answer `CHAN?` while a
+load is changing state, and each unanswered query cost a timeout plus a
+reconnect for all units. Do not reintroduce it in the run path.
+
+**Every setup is checked against Ohm's law** (2026-10-19). At 13:06 CH2 drew the
+previous run's 20 W through a 10 W step with no drop and no error: the setup's
+`CR:HIGH?` read-back answered the new 57.6 ohm, and a minute later the same
+query answered 28.8 — most likely a missed `CHAN 2`, so the setting and its
+read-back both went to another channel. A read-only probe of the four channels
+afterwards found them identical (CR mode, `LEV?` 1, `RANG?` 1, `CR:HIGH?` 57.6,
+`CR:LOW?` 60000 — a second, near-open level that would explain this morning's
+0 W loads if it were active). So instead of asking the instrument what it thinks
+is set, `TestRunnerThread._verify_load` measures what the channel does: after
+`loadon` in a step that ran `setresistance`, it waits `_LOAD_VERIFY_SETTLE_S`
+(0.3 s), reads V and I, and accepts I within `_LOAD_VERIFY_TOL` (15 %) of V/R
+(floor `_LOAD_VERIFY_MIN_A`). A mismatch is measured once more (V and I are two
+reads, and at 100/300 W the voltage can still be moving), then the setup is sent
+again and logged ("CH2 draws 21.2 W ... expected ~10.7 W ... sending the setup
+again"); a second mismatch fails the step with `HardwareError`. A sagging supply
+is not misread as a load fault — its current still matches its voltage — and
+fails on the voltage as before. Cost: ~1 s per run, setups only.
+`PRODIGIT_SET_LEVEL` (empty by default, e.g. `LEV 1`) is written before each
+resistance if set; it is untested as a write on the station.
+
+**Shorter stalls when the link drops** (2026-10-19). With the reconnect now
+logged, a 4-unit BENCH run showed the 3300G dropping the connection 3-4 times,
+each stalling *every* unit (one shared connection) for 6-11 s — seen as a slow
+move to the next step and a slow Stop. The old silent version had the same
+stalls (the 7 s setups at 11:41 and 11:59 are when CH3 kept 28.8 ohm).
+`PRODIGIT_VISA_TIMEOUT_MS` stays 5000 (2500 was tried and reverted: a slow but
+valid reply then counted as a drop and forced a reconnect), and a parallel run polls the
+voltage every 500 ms and samples live A/W every 2 s instead of 300 ms / 1 s,
+about 40 % fewer commands during the waits. A single-unit run is unchanged.
+
+**A link lost mid-test produces no report** (2026-10-28). When the reconnect
+budget runs out, `ProdigitVisaDriver.link_lost_count` goes up. The engine notes
+it at each unit's start (`_unit_link_mark`); if it moved, `_save_record` skips
+the database and `_run_single_unit` marks the report `aborted_link_lost` — every
+exit path of `_run_single_unit_inner` is covered, as with Stop. The window
+creates no PDF/XML for it, does not count it in the batch, shows "NO COMM" in
+red on its progress row, and replaces the PASS/FAIL banner with "Load
+communication lost … No report was saved for: …". The exit load-off and its red
+"LOAD MAY STILL BE ON" warning are unchanged. A drop the reconnect recovers from
+is reported normally. The link is shared, so every unit running when it was lost
+loses its report.
+
+**Load-link indicator** (2026-10-28, `ui/widgets/link_led.py`). A dot and a label
+in the toolbar, right of the active script: green "Load connected", orange
+"Load reconnecting...", red "No connection to load", grey "Load: not checked"
+(USB / no address) or "Simulator". Between runs `MainWindow._probe_link` pings
+the host parsed from `resolved_visa_resource()` every 5 s on a background thread
+(`PingProbe`) — ICMP only, never a TCP connection, because the 3300G accepts one
+and the scan or next run needs it. During a run the ping pauses and the driver
+reports the real link: `ProdigitVisaDriver.on_link_state` -> "reconnecting" on
+the first failed I/O, "ok" once a retry succeeds, "down" when the reconnect
+budget runs out; the engine forwards it as `TestRunnerThread.link_state`.
+Colours are `[state="..."]` selectors in both `.qss` themes.
+
 Detection stays advisory: the operator can still tick an undetected channel
 (spec §1.1.5.3 asks for exclusion, and this remains a deliberate deviation).
 
