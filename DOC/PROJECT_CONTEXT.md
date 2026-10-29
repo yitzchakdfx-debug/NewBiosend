@@ -592,6 +592,23 @@ failures arriving together are shown in one "LOAD MAY STILL BE ON" dialog that
 names the channels. A run that cannot connect says why ("Run did not start"
 shows `TestRunnerThread.connect_error`).
 
+**Full code review fixes** (2026-10-29).
+- *Defaults match the station.* `PRODIGIT_SELECT_SLOT` defaulted to empty, so
+  a customer `.env` built from the example would send every command to one
+  channel (all units tested on it). Defaults are now the station-tested
+  `CHAN {slot}`, `@py` (no NI-VISA needed), `MEAS:VOLT?` for polarity and
+  `MODE CR;CR:HIGH {value}`; `DOC/.env.example` lists them.
+- *XML escaping.* `report_templates.substitute` escapes run values: a serial
+  like `AB&12` or an operator "Smith & Sons" made the XML parse fail and the
+  unit had no CAMSTAR file. XML-invalid control characters are dropped.
+- *PDF and XML independent.* `ReportWorker` attempts the XML even when the
+  PDF fails; a logo is decoded when the PDF is built (`lazy=0`), so a bad
+  logo is skipped instead of failing every report at `doc.build`.
+- *No overlapping runs, no Pause.* Select Product, Start and Run Step refuse
+  while any run is active (`_run_active`, which also covers parallel runs).
+  Pause was removed: it left the load ON with no voltage monitoring, so a
+  unit could pass a burn-in it did not hold. Start is disabled during a run.
+
 **Link-drop diagnostics** (2026-10-29). Drops without a pulled cable happen
 only in 3-4 unit runs (19/10: 47 in 4-unit runs, 0 in single-unit runs), when
 all units share the one TCP session at ~20 commands/s. To tell a slow reply from

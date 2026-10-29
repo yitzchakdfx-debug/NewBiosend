@@ -367,6 +367,7 @@ class ControlPanelWidget(QWidget):
     def set_running_state(self, running: bool) -> None:
         """Toggle button states and labels to reflect whether a run is active."""
         self.btn_stop.setEnabled(running)
+        self.btn_start.setEnabled(not running)
         if not running:
             self.btn_start.setText("Start")
 

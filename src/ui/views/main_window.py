@@ -1112,6 +1112,11 @@ class MainWindow(QMainWindow):
 
     def load_script(self) -> None:
         """Load a test from the database catalog (temp file) for every role."""
+        if self._run_active():
+            # The run is using the active script, and its report takes the
+            # test name and version from it.
+            QMessageBox.information(self, "Select Product", "Stop the test before selecting another product.")
+            return
         dlg = SelectTestDialog(parent=self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
@@ -1340,17 +1345,11 @@ class MainWindow(QMainWindow):
         return names
 
     def _on_start_clicked(self) -> None:
-        txt = self.control_panel.btn_start.text()
-        if txt == "Pause":
-            if self._is_running(self.test_thread):
-                self.test_thread.pause()
-            self.control_panel.btn_start.setText("Resume")
-            return
-
-        if txt == "Resume":
-            if self._is_running(self.test_thread):
-                self.test_thread.resume_pause()
-            self.control_panel.btn_start.setText("Pause")
+        # No Pause (2026-10-29): pausing left the load ON with no voltage
+        # monitoring, so a unit could pass a burn-in it did not hold. Start is
+        # disabled during a run; this guard covers the menu entry too.
+        if self._run_active():
+            QMessageBox.information(self, "Busy", "A test is already running.")
             return
 
         # Checked before the dialog, not after it: the dialog can now record an
@@ -1600,7 +1599,7 @@ class MainWindow(QMainWindow):
         """Run one step out of sequence — Maintenance/Admin diagnostics only."""
         if not self._can(Capability.RUN_SINGLE_STEP):
             return
-        if self._is_running(self.test_thread):
+        if self._run_active():  # a parallel run has no test_thread
             QMessageBox.information(self, "Busy", "A test is already running.")
             return
         group = self._group_for_item(self.test_list.currentItem())
@@ -1638,6 +1637,7 @@ class MainWindow(QMainWindow):
             [(1, "MAINT")], self._step_delay_s, self._step_label
         )
         self.control_panel.btn_stop.setEnabled(True)
+        self.control_panel.btn_start.setEnabled(False)
         self._clear_trace()
         self.append_trace(f"Maintenance run: {sorted(selection)}")
         # The runner builds its default unit on slot 1 with this serial.
@@ -1687,7 +1687,7 @@ class MainWindow(QMainWindow):
         self._batch_fail_count = 0
 
         self.control_panel.btn_stop.setEnabled(True)
-        self.control_panel.btn_start.setText("Pause")
+        self.control_panel.btn_start.setEnabled(False)
 
         loop_count = (
             self.control_panel.spin_loops.value()
@@ -2478,6 +2478,7 @@ class MainWindow(QMainWindow):
                 f"Could not connect to the electronic load:\n\n{exc}\n\n"
                 "Check the cable and power, then start the run again.",
             )
+            self.control_panel.set_running_state(False)  # nothing started: Start back on
             return
         hw_lock = threading.Lock()
         self._parallel_shared_driver = shared_driver
