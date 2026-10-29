@@ -42,10 +42,27 @@ def main() -> int:
     except Exception as e:
         print(f"Note: Could not set AppUserModelID: {e}")
 
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    # The single-instance check comes before any cleanup: a second launch used
+    # to sweep tmp\ (deleting the running instance's active script) before it
+    # discovered it was the second one.
+    lock_path = user_data_path("app.lock")
+    lock = SingleInstanceLock(lock_path)
+    try:
+        lock.acquire()
+    except AlreadyRunningError as exc:
+        QMessageBox.critical(None, "DFX Tester", str(exc))
+        return 1
+    try:
+        return _run(app)
+    finally:
+        lock.release()
+
+
+def _run(app: QApplication) -> int:
     ensure_user_data_seeded()
     _sweep_tmp()
-
-    app = QApplication(sys.argv)
 
     # Deferred so a configuration error can be shown rather than killing a
     # windowless EXE in silence. `config` validates `.env` on import.
@@ -69,31 +86,20 @@ def main() -> int:
     else:
         print(f"Warning: Icon not found at {icon_path}")
 
-    lock_path = user_data_path("app.lock")
-    lock = SingleInstanceLock(lock_path)
-    try:
-        lock.acquire()
-    except AlreadyRunningError as exc:
-        QMessageBox.critical(None, "DFX Tester", str(exc))
-        return 1
-
-    try:
-        while True:
-            login = LoginDialog()
-            if login.exec() != LoginDialog.DialogCode.Accepted:
-                break
-
-            user_info = login.get_user_info()
-            window = MainWindow(user_info)
-            app.setProperty("logout_requested", False)
-            window.show()
-            app.exec()
-            if bool(app.property("logout_requested")):
-                continue
+    while True:
+        login = LoginDialog()
+        if login.exec() != LoginDialog.DialogCode.Accepted:
             break
-        return 0
-    finally:
-        lock.release()
+
+        user_info = login.get_user_info()
+        window = MainWindow(user_info)
+        app.setProperty("logout_requested", False)
+        window.show()
+        app.exec()
+        if bool(app.property("logout_requested")):
+            continue
+        break
+    return 0
 
 
 def _exit_now(code: int) -> None:

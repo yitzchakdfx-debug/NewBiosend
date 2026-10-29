@@ -609,6 +609,25 @@ shows `TestRunnerThread.connect_error`).
   Pause was removed: it left the load ON with no voltage monitoring, so a
   unit could pass a burn-in it did not hold. Start is disabled during a run.
 
+**Full code review fixes, part 2** (2026-10-29).
+- *Run Step makes no report.* A single test run out of sequence on unit
+  "MAINT" (`production_flow=False`) is shown on screen only; it used to write
+  a partial PDF and a CAMSTAR XML for "MAINT" despite the dialog saying no.
+- *Parallel reports per unit.* `_finalize_parallel_unit` writes each unit's
+  report as soon as its thread ends (it used to wait for the last unit, so
+  closing the app mid-run lost reports of units that had already passed).
+- *Maintenance polarity counts.* A polarity-only run on a reversed unit now
+  ends FAIL (its result was ignored, giving a PASS banner over a FAIL row).
+- *Default admin seeded once.* Only into an empty `users` table; it used to
+  come back (with the `.env` password) on every start after being deleted.
+- *User management audited.* Add, update (role/employee id/password changed,
+  never the password) and delete are written to the audit log.
+- *Single instance first.* `main()` takes the instance lock before seeding
+  data or sweeping `tmp\`; a second launch used to delete the running
+  instance's active script first.
+- *PDF time label.* Every timed point gets "t1 (1 min)" (Low Load had none),
+  as Appendix A shows.
+
 **Link-drop diagnostics** (2026-10-29). Drops without a pulled cable happen
 only in 3-4 unit runs (19/10: 47 in 4-unit runs, 0 in single-unit runs), when
 all units share the one TCP session at ~20 commands/s. To tell a slow reply from
