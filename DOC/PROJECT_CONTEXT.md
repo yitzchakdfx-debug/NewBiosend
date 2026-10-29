@@ -592,6 +592,15 @@ failures arriving together are shown in one "LOAD MAY STILL BE ON" dialog that
 names the channels. A run that cannot connect says why ("Run did not start"
 shows `TestRunnerThread.connect_error`).
 
+**Link-drop diagnostics** (2026-10-29). Drops without a pulled cable happen
+only in 3-4 unit runs (19/10: 47 in 4-unit runs, 0 in single-unit runs), when
+all units share the one TCP session at ~20 commands/s. To tell a slow reply from
+the device closing the session, the first failure of each link event is logged
+once (`ProdigitVisaDriver.on_link_problem` -> engine log): "Link problem on CH3:
+timeout (...) on 'MEAS:VOLT?' after 5.0 s (last good reply ... ; 18 commands in
+the 1 s before it)". Behaviour is unchanged; the next step depends on what the
+station logs show (fewer commands if timeouts under load, cable/USB if resets).
+
 **Freeing the port after a cable pull** (2026-10-29, `drivers/link_recovery.py`).
 The 3300G's LAN side is an embedded Metavert controller (web page on :80,
 firmware "Dec 26 2007") that allows one TCP session and never notices a dead

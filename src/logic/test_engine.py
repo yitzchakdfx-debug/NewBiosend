@@ -451,6 +451,10 @@ class TestRunnerThread(QThread):
         elif state == "ok":
             self._link_down_logged = False
 
+    def _on_hw_link_problem(self, info: str) -> None:
+        """Driver diagnostics for a link event: what failed, how, at what command rate."""
+        self._emit_log("error", info)
+
     def _on_hw_reconnect(self, slot: int) -> None:
         self._emit_log(
             "error",
@@ -534,6 +538,8 @@ class TestRunnerThread(QThread):
             self._hw.on_reconnect = self._on_hw_reconnect  # type: ignore[attr-defined]
         if hasattr(self._hw, "on_link_state"):
             self._hw.on_link_state = self._on_hw_link_state  # type: ignore[attr-defined]
+        if hasattr(self._hw, "on_link_problem"):
+            self._hw.on_link_problem = self._on_hw_link_problem  # type: ignore[attr-defined]
         self.progress_total.emit(0)
         self.progress_test.emit(0)
         self.current_test.emit("")

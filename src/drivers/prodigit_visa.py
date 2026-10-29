@@ -7,6 +7,7 @@ come from ``config.py`` and can be overridden in ``.env`` without code changes.
 
 from __future__ import annotations
 
+import collections
 import math
 import re
 import socket
@@ -119,6 +120,23 @@ def _connect_error_message(exc: Exception) -> str:
         "3300G off and on.\n"
         f"Underlying VISA error: {detail}"
     )
+
+
+def _problem_kind(exc: Exception) -> str:
+    """Short name of an I/O failure for the link diagnostics line."""
+    text = f"{type(exc).__name__}: {exc}"
+    low = text.lower()
+    if "tmo" in low or "timeout" in low or "timed out" in low:
+        kind = "timeout"
+    elif "reset" in low:
+        kind = "connection reset"
+    elif "abort" in low:
+        kind = "connection aborted"
+    elif "refused" in low:
+        kind = "connection refused"
+    else:
+        kind = type(exc).__name__
+    return f"{kind} ({text[:90]})"
 
 
 def normalize_resource(name: str) -> str:
@@ -260,6 +278,13 @@ class ProdigitVisaDriver(BaseDriver):
         self._last_down_retry = 0.0
         #: Set by `abort_io` (Stop): no reconnect loops, each op is tried once.
         self._abort = False
+        #: Diagnostics for drops in multi-unit runs (2026-10-29): called once
+        #: per event with what failed, how and under what command rate. Does
+        #: not change behaviour.
+        self.on_link_problem: Callable[[str], None] | None = None
+        self._pending_cmd = ""
+        self._last_ok = 0.0
+        self._sent: collections.deque[float] = collections.deque(maxlen=256)
         self._timeout_ms = (
             int(timeout_ms)
             if timeout_ms
@@ -592,20 +617,28 @@ class ProdigitVisaDriver(BaseDriver):
         if self._link_down:
             return self._io_while_down(op)
         if self._abort:
+            sent = self._mark_sent()
             try:
-                return op()
-            except Exception:
+                result = op()
+                self._last_ok = time.monotonic()
+                return result
+            except Exception as exc:
+                self._report_problem(exc, sent)
                 self._mark_down()
                 raise
         deadline = time.monotonic() + _RECONNECT_BUDGET_S
         retried = False
         while True:
+            sent = self._mark_sent()
             try:
                 result = op()
+                self._last_ok = time.monotonic()
                 if retried:
                     self._notify_link("ok")
                 return result
-            except Exception:
+            except Exception as exc:
+                if not retried:
+                    self._report_problem(exc, sent)
                 if self._abort or time.monotonic() >= deadline:
                     self._mark_down()
                     raise
@@ -615,6 +648,28 @@ class ProdigitVisaDriver(BaseDriver):
                 if self._attempt_reconnect():
                     self._reselect_slot()
                 time.sleep(_RECONNECT_RETRY_DELAY_S)
+
+    def _mark_sent(self) -> float:
+        now = time.monotonic()
+        self._sent.append(now)
+        return now
+
+    def _report_problem(self, exc: Exception, sent_at: float) -> None:
+        """One diagnostics line for the first failure of a link event."""
+        if self.on_link_problem is None:
+            return
+        now = time.monotonic()
+        rate = sum(1 for t in self._sent if sent_at - 1.0 <= t <= sent_at)
+        last_ok = f"{sent_at - self._last_ok:.1f} s before it" if self._last_ok else "none yet"
+        info = (
+            f"Link problem on CH{self._active_slot}: {_problem_kind(exc)} on "
+            f"'{self._pending_cmd or '?'}' after {now - sent_at:.1f} s (last good reply "
+            f"{last_ok}; {rate} commands in the 1 s before it)"
+        )
+        try:
+            self.on_link_problem(info)
+        except Exception:
+            pass
 
     def _mark_down(self) -> None:
         """The link is lost: count it (the unit gets no report) and fail fast from now."""
@@ -696,6 +751,7 @@ class ProdigitVisaDriver(BaseDriver):
         )
         if not command:
             return ""
+        self._pending_cmd = command
         return self._io_with_resilience(
             lambda: self._require_resource().query(command).strip()
         )
@@ -709,6 +765,7 @@ class ProdigitVisaDriver(BaseDriver):
         )
         if not command:
             return
+        self._pending_cmd = command
 
         def op() -> None:
             resource = self._require_resource()
