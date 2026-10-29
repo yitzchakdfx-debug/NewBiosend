@@ -660,7 +660,10 @@ def write_pdf_report(
             candidate = template_dir() / candidate
         if candidate.is_file():
             try:
-                flow.append(Image(str(candidate), width=2.2 * inch, height=0.55 * inch))
+                # lazy=0: decode the image now, so an unreadable logo is caught
+                # here. reportlab otherwise defers it to doc.build(), where it
+                # failed every report built from the template.
+                flow.append(Image(str(candidate), width=2.2 * inch, height=0.55 * inch, lazy=0))
                 flow.append(Spacer(1, 0.1 * inch))
             except Exception:
                 pass  # an unreadable logo must not cost the run its report

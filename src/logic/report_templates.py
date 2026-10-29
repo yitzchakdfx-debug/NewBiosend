@@ -411,6 +411,25 @@ def placeholder_names() -> set[str]:
     }
 
 
+# Characters XML 1.0 forbids even escaped (e.g. control codes a barcode
+# scanner can send).
+_XML_INVALID_RE = re.compile("[^\x09\x0A\x0D\x20-\uD7FF\uE000-\uFFFD]")
+
+
+def _xml_value(value: str) -> str:
+    """A run value made safe for XML text and attribute values."""
+    text = _XML_INVALID_RE.sub("", str(value))
+    return (
+        text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        .replace('"', "&quot;").replace("'", "&apos;")
+    )
+
+
 def substitute(text: str, values: dict[str, str]) -> str:
-    """Replace `{{name}}` with `values[name]`; unknown names become empty."""
-    return _PLACEHOLDER_RE.sub(lambda m: values.get(m.group(1), ""), text)
+    """Replace `{{name}}` with `values[name]`, XML-escaped; unknown names become empty.
+
+    Escaped because the result is parsed as XML: a serial like "AB&12" or an
+    operator "Smith & Sons" used to make the parse fail, and the unit got no
+    CAMSTAR XML at all.
+    """
+    return _PLACEHOLDER_RE.sub(lambda m: _xml_value(values.get(m.group(1), "")), text)

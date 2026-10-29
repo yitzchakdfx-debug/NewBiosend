@@ -24,21 +24,31 @@ class ReportWorker(QThread):
         self._meta, self._rows, self._role = dict(meta), list(rows), role
 
     def run(self) -> None:
+        # The PDF and the XML are attempted independently: a PDF failure (a bad
+        # logo, a layout error) used to skip the XML, so the unit lost its
+        # CAMSTAR record too.
         try:
             gen = ReportGenerator()
-            path = gen.generate_pdf_auto_archive(self._meta, self._rows, self._role)
-            try:
-                gen.generate_xml_auto_archive(self._meta, self._rows, self._role)
-            except XmlCopyError as exc:
-                self.xml_copy_failed.emit(str(exc))
-            except Exception as exc:
-                # An XML failure must not prevent the PDF from being archived,
-                # but it must not be silent either: without the CAMSTAR file the
-                # run cannot be ingested by MES, and swallowing this made a
-                # missing export look like a successful one.
-                self.xml_failed.emit(str(exc))
-            if gen.fallback_notes:
-                self.saved_locally.emit("\n\n".join(gen.fallback_notes))
-            self.archived.emit(str(path))
         except Exception as exc:
             self.failed.emit(str(exc))
+            return
+        pdf_path = None
+        pdf_error = None
+        try:
+            pdf_path = gen.generate_pdf_auto_archive(self._meta, self._rows, self._role)
+        except Exception as exc:
+            pdf_error = exc
+        try:
+            gen.generate_xml_auto_archive(self._meta, self._rows, self._role)
+        except XmlCopyError as exc:
+            self.xml_copy_failed.emit(str(exc))
+        except Exception as exc:
+            # Not silent: without the CAMSTAR file the run cannot be ingested
+            # by MES, and swallowing this made a missing export look fine.
+            self.xml_failed.emit(str(exc))
+        if gen.fallback_notes:
+            self.saved_locally.emit("\n\n".join(gen.fallback_notes))
+        if pdf_error is not None:
+            self.failed.emit(str(pdf_error))
+        else:
+            self.archived.emit(str(pdf_path))
