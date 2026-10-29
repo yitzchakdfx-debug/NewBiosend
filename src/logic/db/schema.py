@@ -123,8 +123,11 @@ def create_tables(db_path, default_admin_username: str,
             updated_by TEXT NOT NULL DEFAULT ''
         );"""
         )
-        _seed_admin(conn, default_admin_username, default_admin_password,
-                    default_admin_employee_id, pbkdf2_iterations)
+        # Only on a fresh database. Seeding on every start re-created the default
+        # admin (with the .env password) each time after an Admin deleted it.
+        if conn.execute("SELECT COUNT(*) FROM users;").fetchone()[0] == 0:
+            _seed_admin(conn, default_admin_username, default_admin_password,
+                        default_admin_employee_id, pbkdf2_iterations)
         conn.commit()
 
 

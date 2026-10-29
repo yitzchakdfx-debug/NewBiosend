@@ -109,6 +109,9 @@ class UserEditDialog(QDialog):
         role = str(self._combo_role.currentData() or self._combo_role.currentText())
         eid = self._edit_employee_id.text().strip()
 
+        #: What was done, for the audit log (never the password itself).
+        self.change: dict[str, str] = {"username": uname, "role": role, "employee_id": eid,
+                                       "password_changed": "yes" if pwd else "no"}
         if self._mode == "add":
             if not pwd:
                 self._error.setText("Password is required.")
@@ -206,9 +209,21 @@ class UserManagementDialog(QDialog):
             self._table.setItem(r, 1, QTableWidgetItem(role_label(str(user["role"]))))
             self._table.setItem(r, 2, QTableWidgetItem(str(user.get("employee_id", ""))))
 
+    def _audit(self, action: str, details: str) -> None:
+        """Record a user-management change (who did it is the logged-in Admin)."""
+        try:
+            self._db.log_audit_action(action, username=self._current_username, details=details)
+        except Exception:
+            pass
+
     def _add_user(self) -> None:
         dlg = UserEditDialog(mode="add", db=self._db, auth=self._auth, parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
+            c = dlg.change
+            self._audit(
+                "User added",
+                f"user={c['username']!r} role={c['role']!r} employee_id={c['employee_id']!r}",
+            )
             self._refresh()
 
     def _edit_user(self) -> None:
@@ -226,6 +241,13 @@ class UserManagementDialog(QDialog):
             parent=self,
         )
         if dlg.exec() == QDialog.DialogCode.Accepted:
+            c = dlg.change
+            self._audit(
+                "User updated",
+                f"user={c['username']!r} role={rec['role']!r}->{c['role']!r} "
+                f"employee_id={rec.get('employee_id', '')!r}->{c['employee_id']!r} "
+                f"password_changed={c['password_changed']}",
+            )
             self._refresh()
 
     def _delete_user(self) -> None:
@@ -245,8 +267,11 @@ class UserManagementDialog(QDialog):
         )
         if choice != QMessageBox.StandardButton.Yes:
             return
+        rec = self._selected_record() or {}
         try:
             self._db.delete_user(username)
-            self._refresh()
         except Exception as exc:
             QMessageBox.warning(self, "Delete User Failed", str(exc))
+            return
+        self._audit("User deleted", f"user={username!r} role={rec.get('role', '')!r}")
+        self._refresh()
