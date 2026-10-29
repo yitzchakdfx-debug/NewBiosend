@@ -43,6 +43,7 @@ from config import (
     PRODIGIT_VISA_TIMEOUT_MS,
     PRODIGIT_VISA_WRITE_TERM,
 )
+from drivers import link_recovery
 from drivers.base_driver import BaseDriver, HardwareError, UnknownCommandError
 
 
@@ -101,8 +102,8 @@ def _connect_error_message(exc: Exception) -> str:
         return (
             f"Failed to connect to Prodigit VISA device: {detail}\n"
             "If the load answers ping but not this connection - typically after "
-            "its LAN cable was unplugged during a run - switch the 3300G off and "
-            "on, then try again."
+            "its LAN cable was unplugged during a run - the app has already tried "
+            "to free it; if it still fails, switch the 3300G off and on."
         )
     return (
         "The electronic load refused the connection. It accepts only ONE "
@@ -110,11 +111,19 @@ def _connect_error_message(exc: Exception) -> str:
         "  • another copy of this application,\n"
         "  • a leftover process from a previous session,\n"
         "  • a terminal/bench tool connected to the same port, or\n"
-        "  • a session dropped by an unplugged cable. The 3300G may keep it "
-        "(or stop accepting connections) indefinitely: if this does not clear "
-        "within a minute, switch the 3300G off and on.\n"
+        "  • a session dropped by an unplugged cable. The app tries to free it "
+        "automatically; if this does not clear within a minute, switch the "
+        "3300G off and on.\n"
         f"Underlying VISA error: {detail}"
     )
+
+
+def _raw_socket(resource: Any) -> Any:
+    """The pyvisa-py TCP socket behind `resource`, or None (NI-VISA, internals moved)."""
+    try:
+        return resource.visalib.sessions[resource.session].interface
+    except Exception:
+        return None
 
 
 def _tune_socket(resource: Any) -> None:
@@ -272,11 +281,15 @@ class ProdigitVisaDriver(BaseDriver):
                     "load's address in Admin > Connections, or "
                     "PRODIGIT_VISA_RESOURCE in .env."
                 )
-            resource = rm.open_resource(resource_name, open_timeout=self._timeout_ms)
+            resource = self._open_freeing_stale(rm, resource_name)
             resource.timeout = self._timeout_ms
             resource.read_termination = self._read_term
             resource.write_termination = self._write_term
             _tune_socket(resource)
+            target = link_recovery.tcp_target(resource_name)
+            sock = _raw_socket(resource)
+            if target is not None and sock is not None:
+                link_recovery.remember_from_socket(*target, sock)
             self._ctx = _VISAContext(
                 resource=resource, resource_name=resource_name, manager=rm
             )
@@ -293,6 +306,21 @@ class ProdigitVisaDriver(BaseDriver):
                 # A real unit should still be usable even if *IDN? is not supported.
                 pass
         return True
+
+    def _open_freeing_stale(self, rm: Any, resource_name: str) -> Any:
+        """Open the resource; if that fails on a LAN load, free a stale session and retry once.
+
+        After a cable pull the 3300G ignores new connects until its dead
+        session is cleared; a connect from that session's local port clears it
+        (`drivers.link_recovery`).
+        """
+        try:
+            return rm.open_resource(resource_name, open_timeout=self._timeout_ms)
+        except Exception:
+            target = link_recovery.tcp_target(resource_name)
+            if target is None or not link_recovery.kick_stale_session(*target):
+                raise
+            return rm.open_resource(resource_name, open_timeout=self._timeout_ms)
 
     def abort_io(self) -> None:
         """Stop pressed: end reconnect attempts now; each later op is tried once.

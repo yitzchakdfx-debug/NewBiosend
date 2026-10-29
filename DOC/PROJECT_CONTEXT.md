@@ -570,6 +570,24 @@ failures arriving together are shown in one "LOAD MAY STILL BE ON" dialog that
 names the channels. A run that cannot connect says why ("Run did not start"
 shows `TestRunnerThread.connect_error`).
 
+**Freeing the port after a cable pull** (2026-10-29, `drivers/link_recovery.py`).
+The 3300G's LAN side is an embedded Metavert controller (web page on :80,
+firmware "Dec 26 2007") that allows one TCP session and never notices a dead
+peer. Pull the cable mid-session: Windows resets its socket at once, the RST
+never reaches the device, and after the replug it keeps the dead session and
+ignores every new connect to 4001 — ping and :80 still answer — until a power
+cycle. Measured on the station: a plain connect timed out; a connect **bound to
+the dead session's local port** succeeded (the device takes the SYN as that
+session's and drops it); after closing that one, a normal connect worked. So
+`ProdigitVisaDriver.connect()` remembers each session's local port
+(`remember_from_socket`, also in `load_link.json` in the user data dir so an app
+restart can still use it), and when opening fails it calls
+`kick_stale_session` (connect from that port, RST-close) and retries once. This
+covers in-run reconnects, Start, the channel scan and the load-off paths. The
+idle link probe kicks too when ping answers but the port does not, so after a
+replug the LED turns green by itself and loads-off-on-return switches the loads
+off. "Switch the 3300G off and on" remains only as the last resort.
+
 The read failure used to be swallowed (`except Exception: v = None`), which
 skipped the range check: pulling the instrument's cable two minutes into a
 burn-in left the remaining 28 minutes unmonitored while the run still passed.

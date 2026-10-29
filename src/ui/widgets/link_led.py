@@ -11,6 +11,8 @@ import threading
 from datetime import datetime
 
 from PySide6.QtCore import QObject, Signal
+
+from drivers.link_recovery import kick_stale_session
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
 #: Text shown for each state. Colours live in the .qss (`[state="..."]`).
@@ -112,6 +114,11 @@ class PingProbe(QObject):
         try:
             if self._ping(host):
                 state = "ok" if port is None or self._port_open(host, port) else "port"
+                # Ping answers, the port does not: the 3300G is most likely
+                # holding the session a pulled cable left behind. Free it and
+                # look again (see drivers.link_recovery).
+                if state == "port" and kick_stale_session(host, port) and self._port_open(host, port):
+                    state = "ok"
         finally:
             self._busy = False
         self.result.emit(state)
