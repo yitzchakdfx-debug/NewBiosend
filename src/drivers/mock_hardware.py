@@ -37,12 +37,43 @@ class MockHardware(BaseDriver):
     def __init__(self) -> None:
         self.connected = False
         self._rng = random.Random()
+        # Mode, LOAD state and resistance are per channel, as on the 3300G: one
+        # parallel unit switching its load off must not switch the others off.
+        self._channels: dict[int, dict] = {}
         self._mode = "CR"
         self._load_on = False
         self._set_current = 0.0
         self._set_voltage = 0.0
         self._set_resistance = 12.5
         self._set_power = 0.0
+
+    def _chan(self) -> dict:
+        slot = getattr(self, "_selected_slot", None) or 1
+        return self._channels.setdefault(slot, {"mode": "CR", "load_on": False, "res": 12.5})
+
+    @property
+    def _mode(self) -> str:
+        return self._chan()["mode"]
+
+    @_mode.setter
+    def _mode(self, value: str) -> None:
+        self._chan()["mode"] = value
+
+    @property
+    def _load_on(self) -> bool:
+        return self._chan()["load_on"]
+
+    @_load_on.setter
+    def _load_on(self, value: bool) -> None:
+        self._chan()["load_on"] = value
+
+    @property
+    def _set_resistance(self) -> float:
+        return self._chan()["res"]
+
+    @_set_resistance.setter
+    def _set_resistance(self, value: float) -> None:
+        self._chan()["res"] = value
 
     def activate_slot(self, slot_index: int, *, load_serial_number: str = "") -> None:
         """Slot selection for the mock driver (remembered for `selected_slot`)."""
@@ -119,15 +150,22 @@ class MockHardware(BaseDriver):
 
         if cmd == "meascurrent":
             time.sleep(self._rng.uniform(0.05, 0.15))
+            if not self._load_on:
+                return 0.0  # a load that is off draws nothing
             if self._load_on and self._mode == "CR" and self._set_resistance > 0:
                 # Ohm's law, so the engine's post-LOAD ON check sees a real load.
                 return round(24.0 / self._set_resistance + self._rng.uniform(-0.005, 0.005), 4)
-            return round(self._set_current + self._rng.uniform(-0.05, 0.05), 3)
+            return round(max(0.0, self._set_current + self._rng.uniform(-0.05, 0.05)), 3)
 
         if cmd == "measpower":
             time.sleep(self._rng.uniform(0.05, 0.15))
+            if not self._load_on:
+                return 0.0
             v = 24.0 + self._rng.uniform(-0.5, 0.5)
-            i = self._set_current + self._rng.uniform(-0.05, 0.05)
+            if self._load_on and self._mode == "CR" and self._set_resistance > 0:
+                # P = V^2 / R, matching meascurrent's V / R (5.76 ohm -> ~100 W).
+                return round(v * v / self._set_resistance, 2)
+            i = max(0.0, self._set_current + self._rng.uniform(-0.05, 0.05))
             return round(v * i, 2)
 
         if cmd == "setresistance":
