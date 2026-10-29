@@ -196,6 +196,13 @@ Three consequences worth knowing:
     "Tests Passed" counts the tests the unit's rows cover (N/A ones included),
     not the template's section list (2026-10-29): with a test removed from the
     script a fully passing unit reads "3 / 3", not "3 / 4"; with one added, "5 / 5".
+  - *A test added to the script but not to `test_sections`* (2026-10-29) is
+    placed in the PDF and XML right after the listed test that precedes it in
+    the run (`report_xml.group_by_report_test`; the engine's Polarity row
+    counts as seen with the LED step, since an LED-fail backfill records it
+    last), not at the end. If it has voltage limits, its PDF section gets
+    `EXPECTED_FROM_LIMITS` and "Load Mode: Constant Resistance (CR)"; a test
+    listed in the template always uses the template's text.
   - *Expected Value from limits (Req 22/25).* `test_sections` text may use
     `{nominal} {tol} {min} {max}`, filled by `_expected_text` from the test's
     voltage limits; the Low Load / Burn-In default is

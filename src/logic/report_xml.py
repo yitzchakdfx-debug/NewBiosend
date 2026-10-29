@@ -42,6 +42,9 @@ CANONICAL_UOM: dict[str, str] = {
     "Resistance": "ohm",
 }
 
+_LED_TEST = "LED Indication Test"
+_POLARITY_TEST = "Polarity Check"
+
 #: Emission order of quantities inside a measurement block, matching the
 #: customer's template.
 QUANTITY_ORDER: tuple[str, ...] = ("Voltage", "Current", "Power", "Resistance")
@@ -70,8 +73,10 @@ def group_by_report_test(
     would silently reorder customer-facing output. Sorting here makes the spec
     order an invariant of the report instead of an accident of the engine.
 
-    Tests absent from the spec's section list keep their first-seen order after
-    the known ones, so a non-spec product still renders.
+    A test absent from the section list (one an Admin added to the script) is
+    placed right after the listed test that precedes it in the run — its place
+    in the script — rather than at the end (2026-10-29). Several in a row keep
+    their order; one before every listed test comes first.
     """
     grouped: dict[str, list[dict[str, Any]]] = {}
     for row in results:
@@ -94,12 +99,21 @@ def group_by_report_test(
         "test_sections"
     ]
     spec_order = list(sections)
-    return sorted(
-        grouped.items(),
-        key=lambda kv: (
-            spec_order.index(kv[0]) if kv[0] in spec_order else len(spec_order),
-        ),
-    )
+    seen = list(grouped)  # first-seen order = script order
+
+    def key(name: str) -> tuple[float, int]:
+        if name in spec_order:
+            return (float(spec_order.index(name)), -1)
+        position = seen.index(name)
+        before = set(seen[:position])
+        # The Polarity row comes from the engine, right after the LED step, but
+        # an LED-fail backfill records it last: count it as seen with the LED.
+        if _LED_TEST in before:
+            before.add(_POLARITY_TEST)
+        anchor = max((spec_order.index(n) for n in before if n in spec_order), default=-1)
+        return (anchor + 0.5, position)
+
+    return sorted(grouped.items(), key=lambda kv: key(kv[0]))
 
 
 def _fmt(value: Any) -> str:

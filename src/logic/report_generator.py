@@ -29,6 +29,7 @@ from reportlab.platypus.tables import LongTable
 from logic.report_templates import (
     COLUMN_FIELDS,
     DEFAULT_PDF_TEMPLATE,
+    EXPECTED_FROM_LIMITS,
     read_pdf_template,
     template_dir,
 )
@@ -533,7 +534,17 @@ def _appendix_a_sections(
     sections_cfg = template.get("test_sections") or {}
     flow: list[Any] = []
     for number, (test_name, rows) in enumerate(grouped, start=1):
-        cfg = sections_cfg.get(test_name) or {}
+        cfg = sections_cfg.get(test_name)
+        if cfg is None:
+            # A test the Admin added to the script but not to the template:
+            # state its limits like the spec's load tests do (all tests run in
+            # CR, spec §1.1.3.4). Without voltage limits `_expected_text`
+            # returns "" and the line is left out.
+            cfg = (
+                {"expected": EXPECTED_FROM_LIMITS, "load_mode": "Constant Resistance (CR)"}
+                if _expected_text(EXPECTED_FROM_LIMITS, rows)
+                else {}
+            )
         # A test counts as skipped only when nothing in it ran; a partially-run
         # test that failed must read FAIL, not N/A (spec §1.1.4.5).
         if all(r.get("skipped") for r in rows):
