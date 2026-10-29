@@ -88,8 +88,8 @@ DFX_ate ships as a **PyInstaller onedir** Windows bundle. The toolchain is wired
 into the repo:
 
 - **`DFX_Tester.spec`** — onedir build of `src/main.py`. Bundles `ui/assets/`
-  (icons + all three `.qss`) and the seed data (`limits.json`, `sequence.tst`,
-  `demo_system.tst`) under paths that mirror `src/`, so `resource_path(...)`
+  (icons + all three `.qss`) and the seed data (`limits.json`,
+  `biosense_test.tst`) under paths that mirror `src/`, so `resource_path(...)`
   resolves identically in dev and frozen. Force-includes `cryptography`
   submodules and `dotenv` (lazy imports PyInstaller can miss). UPX is off and
   `console=False`. Note: `.env` is **not** bundled — it is runtime config

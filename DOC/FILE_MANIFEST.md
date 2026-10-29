@@ -99,11 +99,7 @@ materially changed.
 
 | File Path                       | Kind          | Short Description                                                                                              |
 | ------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------- |
-| `src/data/sequence.tst`         | config (seed) | Default sequence loaded on launch for non-operator roles.                                                     |
-| `src/data/demo_system.tst`      | config (seed) | Demo script exercising every keyword/command.                                                                 |
-| `src/data/28VDC Power Supply Input.tst`           | config | Real-world sample sequence.                                                                          |
-| `src/data/SPREOS Power Supply Main Card.tst`      | config | Real-world sample sequence.                                                                          |
-| `src/data/12VDC RF Module Stabilized Output Interface.tst` | config | Real-world sample sequence.                                                                 |
+| `src/data/BENCH_ONLY_biosense_test_10W_20W_5s.tst` | local, not in git | Bench/report-preview copy of the 10 W / 20 W bench script with every load wait 5 s (time labels kept). The other sample scripts (SPREOS, 12VDC RF, 28VDC, demo, sequence, voltage_check, biosense_test_5v/_10pct) were removed 2026-10-29: not this product. |
 | `src/data/limits.json`          | config        | **(STALE/UNUSED)** Legacy JSON limits. Keys do not match any current `.tst` test names. Still seeded by `paths.py` and bundled by the spec. |
 | `src/data/database.db`          | state         | SQLite DB (runs, results, users, versions, audit). Created on first run; git-ignored.                          |
 | `src/data/logs/`                | state         | Encrypted daily hardware/system logs (`sys_YYYYMMDD.dat`); git-ignored.                                        |
