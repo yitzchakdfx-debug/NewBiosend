@@ -900,8 +900,11 @@ class TestRunnerThread(QThread):
 
         # Maintenance can run the Polarity Check on its own (it has no script
         # steps — the engine performs it). Production runs it as a gate below.
+        # Its result counts towards the unit's verdict: it used to be ignored,
+        # so a reversed unit showed a FAIL row under a PASS banner.
+        maintenance_polarity_ok = True
         if not self._production_flow and self._polarity_check:
-            self._check_polarity(record, unit)
+            maintenance_polarity_ok = self._check_polarity(record, unit)
 
         # Steps marked `Always` are teardown steps (e.g. a final loadoff). They
         # are pulled out of the normal sequence and run unconditionally at the
@@ -955,7 +958,7 @@ class TestRunnerThread(QThread):
         self._step_weight_s = 0.0
         self._progress_unit = (unit_index, total_units)
         abort_loops = False
-        overall_passed = True
+        overall_passed = maintenance_polarity_ok
         loop_number = 1
 
         for loop_idx in range(self._loop_count):
