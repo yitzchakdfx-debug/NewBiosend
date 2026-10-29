@@ -1,4 +1,4 @@
-"""Admin: configure the station — hardware backend, load address, instrument ports."""
+"""Admin: configure the station — hardware backend, load address, report folders, load S/Ns."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from config import HARDWARE_BACKEND, INSTRUMENTS, PRODIGIT_VISA_RESOURCE
+from config import HARDWARE_BACKEND, PRODIGIT_VISA_RESOURCE
 from drivers.factory import BACKEND_SETTING_KEY, LOAD_RESOURCE_KEY, RESULTS_DIR_KEY, XML_DIR_KEY, load_serial_key
 from logic import load_serials as load_serial_config
 from logic import report_paths
@@ -47,7 +47,7 @@ class ConnectionsDialog(QDialog):
         self._employee_id = employee_id
 
         self.setWindowTitle("Connections")
-        self.resize(560, 360 + len(INSTRUMENTS) * 36)
+        self.resize(560, 420)
 
         root = QVBoxLayout(self)
 
@@ -169,40 +169,14 @@ class ConnectionsDialog(QDialog):
         serials_note.setWordWrap(True)
         root.addWidget(serials_note)
 
-        line3 = QFrame()
-        line3.setFrameShape(QFrame.Shape.HLine)
-        line3.setFrameShadow(QFrame.Shadow.Sunken)
-        root.addWidget(line3)
-
-        # --- Per-instrument connection strings --------------------------------
-        root.addWidget(QLabel("<b>Other instruments</b>"))
-        root.addWidget(
-            QLabel("Enter a COM port (e.g. COM9) or VISA string for each instrument.")
-        )
-
-        form = QFormLayout()
-        form.setContentsMargins(0, 8, 0, 8)
-        form.setVerticalSpacing(6)
-        form.setHorizontalSpacing(12)
-
-        stored = self._db.list_instrument_connections()
-        self._fields: dict[str, QLineEdit] = {}
-        for name in INSTRUMENTS:
-            edit = QLineEdit()
-            edit.setObjectName(f"conn_field_{name.replace(' ', '_')}")
-            edit.setPlaceholderText("COM9  or  USB0::0x0957::…::INSTR")
-            edit.setText(stored.get(name, ""))
-            form.addRow(name, edit)
-            self._fields[name] = edit
-
-        root.addLayout(form)
-
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
+        # Sized to the content: a fixed height squashed the rows.
+        self.resize(560, self.sizeHint().height())
 
     def _folder_row(self, edit: QLineEdit) -> QWidget:
         """A path field with a Browse... button."""
@@ -259,7 +233,6 @@ class ConnectionsDialog(QDialog):
             return  # keep the dialog open
 
         changed: list[str] = []
-        stored = self._db.list_instrument_connections()
 
         def _write(key: str, value: str, label: str, previous: str) -> None:
             """Upsert `key` only if `value` differs from what was loaded."""
@@ -291,9 +264,6 @@ class ConnectionsDialog(QDialog):
                 f"CH{slot} S/N={serial or load_serial_config.env_serial(slot) + ' (.env)'}",
                 self._initial_serials[slot],
             )
-
-        for name, edit in self._fields.items():
-            _write(name, edit.text().strip(), name, stored.get(name, ""))
 
         if changed:
             try:

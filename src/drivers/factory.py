@@ -30,16 +30,14 @@ from config import (
 from drivers.base_driver import BaseDriver
 from drivers.mock_hardware import MockHardware
 
-#: Reserved `instrument_connections` keys for settings that are not instrument
-#: addresses. Double-underscored so they cannot collide with a real instrument
-#: name from `config.INSTRUMENTS`.
+#: Reserved `instrument_connections` keys for station settings. Double-underscored
+#: so they cannot collide with rows an older build stored under plain instrument
+#: names (the removed "Other instruments" list).
 BACKEND_SETTING_KEY = "__hardware_backend__"
 
 #: Row carrying the electronic load's VISA resource string. Reserved-named like
 #: the key above: it previously used a human label ("Electronic Load (VISA)"),
-#: which shares a key space with `config.INSTRUMENTS` -- an INSTRUMENTS entry of
-#: the same name would alias the two, and the dialog's per-instrument loop would
-#: overwrite the dedicated field's value.
+#: which shared a key space with the old per-instrument rows.
 LOAD_RESOURCE_KEY = "__load_visa_resource__"
 
 #: Admin-chosen report folders (see `logic.report_paths`). Empty = default.

@@ -21,12 +21,6 @@ LOAD_SERIALS: list[str] = get_list(
     ["PRODIGIT-CH1", "PRODIGIT-CH2", "PRODIGIT-CH3", "PRODIGIT-CH4"],
 )
 
-# --- Global instrument list (Admin → Connections dialog) ---
-INSTRUMENTS: list[str] = get_list(
-    "INSTRUMENTS",
-    ["Power Supply", "Main Board", "Agilent 34980A", "QEI Arduino", "Outputs Arduino", "I2C Arduino"],
-)
-
 # --- Secrets (required in .env) ---
 LOG_ENCRYPTION_PASSWORD: str = get_required_str("LOG_ENCRYPTION_PASSWORD")
 ADMIN_REPORT_PASSWORD: str = get_required_str("ADMIN_REPORT_PASSWORD")
