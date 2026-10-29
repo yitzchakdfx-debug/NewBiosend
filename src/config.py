@@ -74,7 +74,9 @@ if HARDWARE_BACKEND not in REAL_BACKENDS | SIMULATED_BACKENDS:
     )
 
 PRODIGIT_VISA_RESOURCE: str = get_str("PRODIGIT_VISA_RESOURCE", "")
-PRODIGIT_VISA_BACKEND: str = get_str("PRODIGIT_VISA_BACKEND", "")
+# Defaults below match the station-tested setup (2026-10-29), so a customer
+# .env that omits them still works. "@py" = pyvisa-py: no NI-VISA needed.
+PRODIGIT_VISA_BACKEND: str = get_str("PRODIGIT_VISA_BACKEND", "@py")
 PRODIGIT_VISA_TIMEOUT_MS: str = get_str("PRODIGIT_VISA_TIMEOUT_MS", "5000")
 # Shorter timeout used only by the pre-test channel scan, where a responsive
 # device answers in ~50 ms. Caps non-responding channels/probes instead of
@@ -91,7 +93,7 @@ PRODIGIT_SERIAL_BAUD: str = get_str("PRODIGIT_SERIAL_BAUD", "9600")
 PRODIGIT_CONNECT_CMD: str = get_str("PRODIGIT_CONNECT_CMD", "")
 PRODIGIT_QUERY_ID: str = get_str("PRODIGIT_QUERY_ID", "*IDN?")
 PRODIGIT_QUERY_INPUT_VOLT: str = get_str("PRODIGIT_QUERY_INPUT_VOLT", "MEAS:VOLT?")
-PRODIGIT_QUERY_POLARITY: str = get_str("PRODIGIT_QUERY_POLARITY", "MEAS:POL?")
+PRODIGIT_QUERY_POLARITY: str = get_str("PRODIGIT_QUERY_POLARITY", "MEAS:VOLT?")
 PRODIGIT_QUERY_VOLTAGE: str = get_str("PRODIGIT_QUERY_VOLTAGE", "MEAS:VOLT?")
 PRODIGIT_QUERY_CURRENT: str = get_str("PRODIGIT_QUERY_CURRENT", "MEAS:CURR?")
 PRODIGIT_QUERY_POWER: str = get_str("PRODIGIT_QUERY_POWER", "MEAS:POW?")
@@ -101,7 +103,7 @@ PRODIGIT_SET_LOAD: str = get_str("PRODIGIT_SET_LOAD", "LOAD {state}")
 PRODIGIT_QUERY_LOAD: str = get_str("PRODIGIT_QUERY_LOAD", "LOAD?")
 PRODIGIT_SET_CURRENT: str = get_str("PRODIGIT_SET_CURRENT", "CC:LOW {value}")
 PRODIGIT_QUERY_CURRENT_SET: str = get_str("PRODIGIT_QUERY_CURRENT_SET", "CC:LOW?")
-PRODIGIT_SET_RESISTANCE: str = get_str("PRODIGIT_SET_RESISTANCE", "CR:HIGH {value}")
+PRODIGIT_SET_RESISTANCE: str = get_str("PRODIGIT_SET_RESISTANCE", "MODE CR;CR:HIGH {value}")
 PRODIGIT_QUERY_RESISTANCE_SET: str = get_str("PRODIGIT_QUERY_RESISTANCE_SET", "CR:HIGH?")
 # Optional: selects the active setting level before each resistance write (e.g.
 # "LEV 1"). Empty = not sent. The 3316G holds two CR levels (CR:HIGH / CR:LOW,
@@ -112,7 +114,9 @@ PRODIGIT_QUERY_VOLTAGE_SET: str = get_str("PRODIGIT_QUERY_VOLTAGE_SET", "CV:HIGH
 PRODIGIT_SET_POWER: str = get_str("PRODIGIT_SET_POWER", "CP:HIGH {value}")
 PRODIGIT_QUERY_POWER_SET: str = get_str("PRODIGIT_QUERY_POWER_SET", "CP:HIGH?")
 PRODIGIT_SET_RELAY: str = get_str("PRODIGIT_SET_RELAY", "")
-PRODIGIT_SELECT_SLOT: str = get_str("PRODIGIT_SELECT_SLOT", "")
+# Selects the channel before every command. Empty would send everything to
+# one channel: in a parallel run all units would be tested on it.
+PRODIGIT_SELECT_SLOT: str = get_str("PRODIGIT_SELECT_SLOT", "CHAN {slot}")
 # Reads back the selected channel, so the scan can confirm a selection instead
 # of guessing from identical voltages. Empty disables the check.
 PRODIGIT_QUERY_SLOT: str = get_str("PRODIGIT_QUERY_SLOT", "CHAN?")
