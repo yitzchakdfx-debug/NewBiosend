@@ -130,7 +130,20 @@ class PingProbe(QObject):
 
     @staticmethod
     def _resource_present(resource: str) -> bool:
+        """Is the USB/COM load connected? Lists only; never closes anything.
+
+        pyvisa returns ONE shared ResourceManager per VISA library, and its
+        `close()` closes every resource it opened - the driver's live session
+        included. So the manager is never closed here, and a COM port is
+        checked through pyserial without touching VISA at all.
+        """
+        name = resource.strip().upper()
+        com = re.fullmatch(r"ASRL(\d+)::INSTR", name)
         try:
+            if com:
+                from serial.tools import list_ports
+
+                return any(p.device.upper() == f"COM{com.group(1)}" for p in list_ports.comports())
             import warnings
 
             import pyvisa
@@ -141,13 +154,9 @@ class PingProbe(QObject):
                 warnings.simplefilter("ignore")  # pyvisa-py's optional-package notes
                 backend = PRODIGIT_VISA_BACKEND.strip()
                 rm = pyvisa.ResourceManager(backend) if backend else pyvisa.ResourceManager()
-                try:
-                    found = {str(r).upper() for r in rm.list_resources("?*")}
-                finally:
-                    rm.close()
+                return name in {str(r).upper() for r in rm.list_resources("?*")}
         except Exception:
             return False
-        return resource.strip().upper() in found
 
     def _run(self, host: str, port: int | None) -> None:
         state = "down"

@@ -682,8 +682,12 @@ class ProdigitVisaDriver(BaseDriver):
         """Link down: one reconnect attempt per interval, otherwise fail at once."""
         now = time.monotonic()
         if not self._abort and now - self._last_down_retry >= _DOWN_RETRY_INTERVAL_S:
-            self._last_down_retry = now
-            if self._attempt_reconnect():
+            reconnected = self._attempt_reconnect()
+            # Stamped after the attempt: one attempt (open + stale-session kick
+            # + reopen) can outlast the interval, and stamping before it let
+            # every op that followed start another full attempt.
+            self._last_down_retry = time.monotonic()
+            if reconnected:
                 self._link_down = False
                 self._reselect_slot()
                 self._notify_link("ok")
@@ -785,6 +789,7 @@ class ProdigitVisaDriver(BaseDriver):
         )
         if not query:
             raise RuntimeError("No VISA query template configured for this measurement.")
+        self._pending_cmd = query
         value = self._io_with_resilience(
             lambda: self._require_resource().query(query).strip()
         )
