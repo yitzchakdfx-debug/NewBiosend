@@ -128,6 +128,10 @@ class MainWindow(QMainWindow):
         self.test_thread: TestRunnerThread | None = None
         self._parallel_threads: list[TestRunnerThread] = []
         self._parallel_finished_count: int = 0
+        #: Parallel units whose report is already written (see
+        #: `_finalize_parallel_unit`), and the batch verdict so far.
+        self._parallel_finalized: set[TestRunnerThread] = set()
+        self._parallel_overall_passed: bool = True
         self._parallel_shared_driver: BaseDriver | None = None
         self._parallel_section_order: list[str] = []
         self._parallel_section_cursors: dict[str, int] = {}
@@ -1059,6 +1063,14 @@ class MainWindow(QMainWindow):
                 f"{reports[-1].unit.serial_number}: communication with the load "
                 "was lost - no report saved."
             )
+            return
+        if not getattr(th, "_production_flow", True):
+            # Run Step: one test out of sequence on unit "MAINT" for diagnostics.
+            # Its dialog promises no report, and a partial "MAINT" PDF/XML in
+            # the archive and the CAMSTAR folder would look like a unit record.
+            self._last_run_meta = None
+            self._last_run_rows = []
+            self.append_trace("Single-test run - results on screen only, no report generated.")
             return
         meta, rows = th.report_snapshot()
         logical_name = f"{self._catalog_test_name} {getattr(self, '_catalog_version', '')}".strip()
@@ -2494,6 +2506,8 @@ class MainWindow(QMainWindow):
 
         self._parallel_threads = []
         self._parallel_finished_count = 0
+        self._parallel_finalized = set()
+        self._parallel_overall_passed = True
         for unit in batch_units:
             th = TestRunnerThread(
                 self._active_script_path,
@@ -2556,7 +2570,37 @@ class MainWindow(QMainWindow):
         for th in self._parallel_threads:
             th.start()
 
+    def _finalize_parallel_unit(self, th: TestRunnerThread) -> None:
+        """Write one unit's report as soon as its thread ends.
+
+        Reports used to be written only after the LAST unit finished, so
+        closing the app mid-run lost the report of a unit that had passed
+        minutes earlier.
+        """
+        if th in self._parallel_finalized:
+            return
+        self._parallel_finalized.add(th)
+        original_thread = self.test_thread
+        self.test_thread = th
+        try:
+            self._finalize_run_reports()
+            meta, _ = th.report_snapshot()
+            if str(meta.get("overall_result", "")).upper() != "PASS":
+                self._parallel_overall_passed = False
+        except Exception as exc:
+            # Never silent: a unit without its report is a spec §1.1.4.4
+            # breach and the operator has to know which unit it was.
+            units = getattr(th, "_batch_units", None) or []
+            serial = getattr(units[0], "serial_number", "?") if units else "?"
+            self._record_trace("error", f"Report generation failed for unit {serial}: {exc}")
+            self._parallel_overall_passed = False
+        finally:
+            self.test_thread = original_thread
+
     def _on_parallel_thread_finished(self) -> None:
+        finished = self.sender()
+        if isinstance(finished, TestRunnerThread) and finished in self._parallel_threads:
+            self._finalize_parallel_unit(finished)
         self._parallel_finished_count += 1
         if self._parallel_finished_count < len(self._parallel_threads):
             return
@@ -2568,30 +2612,12 @@ class MainWindow(QMainWindow):
             pass
         self._parallel_shared_driver = None
 
-        overall_passed = True
         stopped = self._stopped_serials(self._parallel_threads)
         lost = self._link_lost_serials(self._parallel_threads)
         total_units = len(self._parallel_threads)
-        original_thread = self.test_thread
         for th in self._parallel_threads:
-            self.test_thread = th
-            try:
-                self._finalize_run_reports()
-                meta, _ = th.report_snapshot()
-                if str(meta.get("overall_result", "")).upper() != "PASS":
-                    overall_passed = False
-            except Exception as exc:
-                # Never silent: this used to be `except Exception: pass`, so a
-                # unit that failed to produce its report looked like a clean
-                # run. A missing report is a spec §1.1.4.4 breach and the
-                # operator has to know which unit it was.
-                units = getattr(th, "_batch_units", None) or []
-                serial = getattr(units[0], "serial_number", "?") if units else "?"
-                self._record_trace(
-                    "error", f"Report generation failed for unit {serial}: {exc}"
-                )
-                overall_passed = False
-        self.test_thread = original_thread
+            self._finalize_parallel_unit(th)  # any not done as it finished
+        overall_passed = self._parallel_overall_passed
 
         try:
             DatabaseManager().log_audit_action(
@@ -2614,6 +2640,8 @@ class MainWindow(QMainWindow):
         for th in self._parallel_threads:
             th.deleteLater()  # all finished and finalised now
         self._parallel_threads = []
+        self._parallel_finalized = set()
+        self._parallel_overall_passed = True
         self._parallel_section_cursors = {}
         self._parallel_section_order = []
         self._parallel_finished_count = 0

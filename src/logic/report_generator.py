@@ -480,13 +480,13 @@ def _measurement_lines(rows: list[dict[str, Any]]) -> list[tuple[str, str]]:
             parts.append(f"{quantity} {shown or '-'} [{uom}]")
         if not parts:
             continue
-        label = ""
-        if multi:
-            label = f"t{position}"
-            time_val = str(group[0].get("report_time", "")).strip()
-            if time_val:
-                uom = str(group[0].get("report_time_uom", "")).strip() or "min"
-                label = f"{label} ({time_val} {uom})"
+        # "t1 (1 min)" for every timed point, a single one included: Appendix A
+        # prints "t1:" for Low Load too, which used to get no label at all.
+        timed = next((r for r in group if str(r.get("report_time", "")).strip()), None)
+        label = f"t{position}" if (multi or timed is not None) else ""
+        if timed is not None:
+            uom = str(timed.get("report_time_uom", "")).strip() or "min"
+            label = f"{label} ({str(timed.get('report_time')).strip()} {uom})"
         lines.append((label, "   ".join(parts)))
     return lines
 
