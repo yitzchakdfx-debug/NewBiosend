@@ -193,6 +193,9 @@ Three consequences worth knowing:
     start, `dd/mm/yyyy HH:MM:SS`), Test Load 3316G Channel ID (SN); then
     Result (Overall), Tests Passed, Part Number, Test Program, SW Version. A
     saved template still equal to the previous default is upgraded.
+    "Tests Passed" counts the tests the unit's rows cover (N/A ones included),
+    not the template's section list (2026-10-29): with a test removed from the
+    script a fully passing unit reads "3 / 3", not "3 / 4"; with one added, "5 / 5".
   - *Expected Value from limits (Req 22/25).* `test_sections` text may use
     `{nominal} {tol} {min} {max}`, filled by `_expected_text` from the test's
     voltage limits; the Low Load / Burn-In default is

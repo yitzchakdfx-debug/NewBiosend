@@ -251,20 +251,21 @@ def _fmt_num(v: Any) -> str:
 
 
 def _tests_passed(run_meta: dict[str, Any], results: list[dict[str, Any]]) -> str:
-    """`"2 / 4"`: report tests whose every row passed, out of the report's tests.
+    """`"2 / 4"`: report tests whose every row passed, out of the unit's tests.
 
-    The denominator is the template's test sections (the spec's four) when the
-    run's tests are among them, so a test with no row at all — Polarity after
-    an LED fail — still counts as not passed. A deselected-steps run says so.
+    The denominator is the tests the unit's rows cover — the script's tests,
+    since a test not reached after a failure still leaves N/A rows, and
+    Polarity after an LED fail is backfilled as N/A. It used to be the PDF
+    template's section list (always the spec's four), so a script with a test
+    removed reported a fully passing unit as "3 / 4". A deselected-steps run
+    says so.
     """
     groups = group_by_report_test(results)
     passed = sum(
         1 for _, rows in groups
         if rows and all(r.get("passed") and not r.get("skipped") for r in rows)
     )
-    sections = list(read_pdf_template().get("test_sections") or {})
-    names = [name for name, _ in groups]
-    total = len(sections) if names and all(n in sections for n in names) else len(names)
+    total = len(groups)
     if not total:
         return ""
     text = f"{passed} / {total}"
