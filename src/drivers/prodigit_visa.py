@@ -8,6 +8,7 @@ come from ``config.py`` and can be overridden in ``.env`` without code changes.
 from __future__ import annotations
 
 import math
+import re
 import socket
 import struct
 import time
@@ -42,6 +43,8 @@ from config import (
     PRODIGIT_VISA_RESOURCE,
     PRODIGIT_VISA_TIMEOUT_MS,
     PRODIGIT_VISA_WRITE_TERM,
+    PRODIGIT_SERIAL_BAUD,
+    PRODIGIT_CONNECT_CMD,
 )
 from drivers import link_recovery
 from drivers.base_driver import BaseDriver, HardwareError, UnknownCommandError
@@ -116,6 +119,28 @@ def _connect_error_message(exc: Exception) -> str:
         "3300G off and on.\n"
         f"Underlying VISA error: {detail}"
     )
+
+
+def normalize_resource(name: str) -> str:
+    """`COM3` -> `ASRL3::INSTR` (a USB link that shows up as a COM port); others unchanged."""
+    text = (name or "").strip()
+    match = re.fullmatch(r"COM(\d+)", text, re.IGNORECASE)
+    return f"ASRL{match.group(1)}::INSTR" if match else text
+
+
+def _is_serial(resource_name: str) -> bool:
+    return str(resource_name).strip().upper().startswith("ASRL")
+
+
+def _configure_serial(resource: Any, resource_name: str) -> None:
+    """Line settings for a COM-port link (`PRODIGIT_SERIAL_BAUD`, 8N1). Best-effort."""
+    if not _is_serial(resource_name):
+        return
+    try:
+        resource.baud_rate = int(_parse_float(PRODIGIT_SERIAL_BAUD, 9600))
+        resource.data_bits = 8
+    except Exception:
+        pass
 
 
 def _raw_socket(resource: Any) -> Any:
@@ -247,9 +272,9 @@ class ProdigitVisaDriver(BaseDriver):
         # a future bench script) pointed at the configured instrument rather than
         # silently at auto-discovery.
         self._resource_name = (
-            resource_name.strip()
+            normalize_resource(resource_name)
             if resource_name is not None
-            else PRODIGIT_VISA_RESOURCE.strip()
+            else normalize_resource(PRODIGIT_VISA_RESOURCE)
         )
         self._backend = PRODIGIT_VISA_BACKEND.strip() or None
         self._read_term = PRODIGIT_VISA_READ_TERM
@@ -285,6 +310,7 @@ class ProdigitVisaDriver(BaseDriver):
             resource.timeout = self._timeout_ms
             resource.read_termination = self._read_term
             resource.write_termination = self._write_term
+            _configure_serial(resource, resource_name)
             _tune_socket(resource)
             target = link_recovery.tcp_target(resource_name)
             sock = _raw_socket(resource)
@@ -299,6 +325,11 @@ class ProdigitVisaDriver(BaseDriver):
             raise HardwareError(_connect_error_message(exc)) from exc
 
         self._link_down = False
+        if PRODIGIT_CONNECT_CMD.strip():
+            try:
+                self._ctx.resource.write(PRODIGIT_CONNECT_CMD.strip())
+            except Exception:
+                pass  # the first real command reports a dead link properly
         if self._probe_identity:
             try:
                 _ = self.execute_command("getid", [])
@@ -528,16 +559,20 @@ class ProdigitVisaDriver(BaseDriver):
         except Exception:
             resources = ()
         for resource_name in resources:
-            if "USB" not in str(resource_name).upper():
+            usb = "USB" in str(resource_name).upper()
+            # A COM port is only taken if it answers as a Prodigit: any other
+            # serial device would answer something, or nothing at all.
+            if not usb and not _is_serial(resource_name):
                 continue
             try:
                 resource = rm.open_resource(resource_name)
                 resource.timeout = self._timeout_ms
                 resource.read_termination = self._read_term
                 resource.write_termination = self._write_term
+                _configure_serial(resource, resource_name)
                 identity = resource.query(PRODIGIT_QUERY_ID).strip()
                 resource.close()
-                if identity:
+                if identity and (usb or "PRODIGIT" in identity.upper()):
                     return str(resource_name)
             except Exception:
                 continue

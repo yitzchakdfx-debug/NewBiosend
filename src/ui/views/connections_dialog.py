@@ -92,6 +92,11 @@ class ConnectionsDialog(QDialog):
         self._edit_load.setPlaceholderText(
             f"blank = use .env  ({env_addr or 'auto-discover USB'})"
         )
+        self._edit_load.setToolTip(
+            "LAN: TCPIP0::192.168.16.123::4001::SOCKET\n"
+            "USB as a COM port: COM3 (or ASRL3::INSTR)\n"
+            "USBTMC: USB0::<vendor>::<product>::<serial>::INSTR"
+        )
         self._initial_load = stored_settings.get(LOAD_RESOURCE_KEY, "").strip()
         self._edit_load.setText(self._initial_load)
         backend_form.addRow("Electronic load address", self._edit_load)

@@ -109,6 +109,46 @@ class PingProbe(QObject):
         sock.close()
         return True
 
+    def probe_resource(self, resource: str) -> None:
+        """USB / COM-port load: is the device present? ("ok" / "down").
+
+        Presence only - opening it here could take the port from the scan or
+        the next run. Listing does not open anything.
+        """
+        if self._busy or not resource:
+            return
+        self._busy = True
+        threading.Thread(target=self._run_resource, args=(resource,), daemon=True).start()
+
+    def _run_resource(self, resource: str) -> None:
+        state = "down"
+        try:
+            state = "ok" if self._resource_present(resource) else "down"
+        finally:
+            self._busy = False
+        self.result.emit(state)
+
+    @staticmethod
+    def _resource_present(resource: str) -> bool:
+        try:
+            import warnings
+
+            import pyvisa
+
+            from config import PRODIGIT_VISA_BACKEND
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")  # pyvisa-py's optional-package notes
+                backend = PRODIGIT_VISA_BACKEND.strip()
+                rm = pyvisa.ResourceManager(backend) if backend else pyvisa.ResourceManager()
+                try:
+                    found = {str(r).upper() for r in rm.list_resources("?*")}
+                finally:
+                    rm.close()
+        except Exception:
+            return False
+        return resource.strip().upper() in found
+
     def _run(self, host: str, port: int | None) -> None:
         state = "down"
         try:

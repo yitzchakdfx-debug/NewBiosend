@@ -47,6 +47,7 @@ from config import SHOW_NIGHT_MODE, SHOW_SEARCH_BAR
 from logic.load_serials import load_serials
 from drivers.base_driver import BaseDriver, HardwareError
 from drivers.factory import create_driver, is_simulated, resolve_station_config, resolved_visa_resource
+from drivers.prodigit_visa import normalize_resource
 from logic.database_manager import DatabaseManager
 from logic.report_templates import read_pdf_template
 from logic.test_groups import TestGroup, always_step_names, build_test_groups
@@ -1716,20 +1717,27 @@ class MainWindow(QMainWindow):
             return
         if is_simulated():
             self.link_led.set_state("sim", "HARDWARE_BACKEND is a simulator")
-        elif not self._link_host:
-            self.link_led.set_state("unknown", "No network address for the load (USB or auto-discovery)")
+            return
+        resource = normalize_resource(resolved_visa_resource())
+        if not self._link_host and not resource:
+            self.link_led.set_state("unknown", "No load address set (auto-discovery)")
         elif QApplication.activeModalWidget() is not None:
             # A dialog (the channel scan, a run prompt) may be about to use the
             # load's one connection; the TCP check must not take it.
             return
-        else:
+        elif self._link_host:
             self._ping.probe(self._link_host, self._link_port)
+        else:
+            self._ping.probe_resource(resource)  # USB / COM port: is it present?
 
     def _on_ping_result(self, state: str) -> None:
         if self._run_active():
             return  # a run started meanwhile; its own link events win
-        how = "ping + control port" if self._link_port else "ping"
-        self.link_led.set_state(state, f"Load at {self._link_host} ({how})")
+        if self._link_host:
+            how = "ping + control port" if self._link_port else "ping"
+            self.link_led.set_state(state, f"Load at {self._link_host} ({how})")
+        else:
+            self.link_led.set_state(state, f"Load at {resolved_visa_resource()} (USB/COM device present)")
         if state == "ok" and self._loads_unconfirmed:
             self._loads_off_after_reconnect()
 

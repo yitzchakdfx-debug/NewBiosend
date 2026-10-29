@@ -82,6 +82,13 @@ PRODIGIT_VISA_TIMEOUT_MS: str = get_str("PRODIGIT_VISA_TIMEOUT_MS", "5000")
 PRODIGIT_SCAN_TIMEOUT_MS: str = get_str("PRODIGIT_SCAN_TIMEOUT_MS", "1500")
 PRODIGIT_VISA_READ_TERM: str = get_str("PRODIGIT_VISA_READ_TERM", "\r\n")
 PRODIGIT_VISA_WRITE_TERM: str = get_str("PRODIGIT_VISA_WRITE_TERM", "\r\n")
+# USB that shows up as a COM port (`ASRL<n>::INSTR`, or `COM<n>` in Connections):
+# its baud rate. Not yet verified on the station (2026-10-29) - match the
+# 3300G's front-panel setting.
+PRODIGIT_SERIAL_BAUD: str = get_str("PRODIGIT_SERIAL_BAUD", "9600")
+# Written once after each connect, e.g. "REMOTE" (the 3300G manual asks for it
+# over USB/LAN). Empty = nothing; LAN works without it.
+PRODIGIT_CONNECT_CMD: str = get_str("PRODIGIT_CONNECT_CMD", "")
 PRODIGIT_QUERY_ID: str = get_str("PRODIGIT_QUERY_ID", "*IDN?")
 PRODIGIT_QUERY_INPUT_VOLT: str = get_str("PRODIGIT_QUERY_INPUT_VOLT", "MEAS:VOLT?")
 PRODIGIT_QUERY_POLARITY: str = get_str("PRODIGIT_QUERY_POLARITY", "MEAS:POL?")

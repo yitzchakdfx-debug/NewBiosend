@@ -18,7 +18,7 @@ this app only uses QtCore / QtGui / QtWidgets / QtSvg (for icons).
 
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
 SPEC_DIR = Path(SPECPATH).resolve()
 SRC = SPEC_DIR / "src"
@@ -55,6 +55,12 @@ hiddenimports = collect_submodules("cryptography") + ["dotenv"]
 # the load on a machine that has HARDWARE_BACKEND=prodigit.
 hiddenimports += collect_submodules("pyvisa")
 hiddenimports += collect_submodules("pyvisa_py")
+# USB to the load (2026-10-29): pyvisa-py imports these lazily too. pyserial for
+# a USB link that shows up as a COM port; pyusb + libusb_package (which carries
+# the libusb DLL) for USBTMC.
+hiddenimports += collect_submodules("serial") + collect_submodules("usb") + ["libusb_package"]
+datas += collect_data_files("libusb_package")
+binaries = collect_dynamic_libs("libusb_package")
 
 excludes = [
     # Heavy PySide6 modules this app does not use. Excluding the Python
@@ -121,7 +127,7 @@ excludes = [
 a = Analysis(
     [str(SRC / "main.py")],
     pathex=[str(SRC)],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],

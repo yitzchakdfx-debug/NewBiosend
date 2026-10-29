@@ -600,6 +600,21 @@ idle link probe kicks too when ping answers but the port does not, so after a
 replug the LED turns green by itself and loads-off-on-return switches the loads
 off. "Switch the 3300G off and on" remains only as the last resort.
 
+**USB to the load** (2026-10-29, prepared, not yet tried on the station). The
+venv had only PyVISA + PyVISA-py, so a USB cable could not be used at all. Added
+`pyserial` (a USB link that shows up as a COM port, `ASRL<n>::INSTR`; Connections
+also accepts `COM<n>`) and `pyusb` + `libusb-package` (USBTMC, `USB0::...::INSTR`),
+in `requirements.txt` and the PyInstaller spec (with the libusb DLL). Which kind
+the 3300G presents is still unknown. A COM link gets `PRODIGIT_SERIAL_BAUD` (8N1;
+9600 is a guess — match the front panel); `PRODIGIT_CONNECT_CMD` (e.g. `REMOTE`,
+which the 3300G manual asks for over USB/LAN) is written after each connect if
+set. The reconnect, fast-Stop, load-off and no-report-on-lost-link logic is
+transport-independent; the LAN-only parts (TCP probe, stale-session kick) are
+skipped for USB, and the LED instead checks that the resource is present in the
+VISA list (nothing is opened), so loads-off-on-return also works over USB. A
+USBTMC device must be bound to a libusb-compatible driver (WinUSB) for pyusb to
+open it — check on the first connection.
+
 The read failure used to be swallowed (`except Exception: v = None`), which
 skipped the range check: pulling the instrument's cable two minutes into a
 burn-in left the remaining 28 minutes unmonitored while the run still passed.
