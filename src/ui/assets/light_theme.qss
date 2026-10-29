@@ -524,6 +524,8 @@ QLabel#link_led_dot[state="reconnecting"] { background-color: #f59e0b; }
 QLabel#link_led_dot[state="down"] { background-color: #dc2626; }
 QLabel#link_led_text[state="down"] { color: #dc2626; font-weight: bold; }
 QLabel#link_led_text[state="reconnecting"] { color: #b45309; font-weight: bold; }
+QLabel#link_led_dot[state="port"] { background-color: #dc2626; }
+QLabel#link_led_text[state="port"] { color: #dc2626; font-weight: bold; }
 
 /* --- Per-unit progress rows (control panel) --- */
 QLabel#unit_progress_owner { font-weight: bold; }

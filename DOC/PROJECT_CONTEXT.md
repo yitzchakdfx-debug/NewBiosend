@@ -461,8 +461,14 @@ in the toolbar, right of the active script: green "Load connected", orange
 "Load reconnecting...", red "No connection to load", grey "Load: not checked"
 (USB / no address) or "Simulator". Between runs `MainWindow._probe_link` pings
 the host parsed from `resolved_visa_resource()` every 5 s on a background thread
-(`PingProbe`) — ICMP only, never a TCP connection, because the 3300G accepts one
-and the scan or next run needs it. During a run the ping pauses and the driver
+(`PingProbe`) and, if it answers, opens a TCP connection to the control port and
+closes it at once with RST (`SO_LINGER 0`, frees the 3300G's one slot in ~0.1 s).
+Red "Load not answering - switch the 3300G off and on" means ping works but the
+port does not: on the station (2026-10-29) a LAN cable pulled mid-run left the
+control port dead for 20+ minutes with ping still answering — ping alone showed
+green, and only a power cycle clears it. The probe is skipped while a modal
+dialog (channel scan, run prompt) may be using the port, and the
+loads-off-on-return step runs only on a full "ok". During a run the probe pauses and the driver
 reports the real link: `ProdigitVisaDriver.on_link_state` -> "reconnecting" on
 the first failed I/O, "ok" once a retry succeeds, "down" when the reconnect
 budget runs out; the engine forwards it as `TestRunnerThread.link_state`.
@@ -549,6 +555,20 @@ resistance steps *between* burn-in delays still add a few seconds per point.
   `_io_with_resilience` has spent its full reconnect budget
   (`_RECONNECT_BUDGET_S`, retrying and reopening the VISA resource), so it means
   the link is genuinely down, not blipping.
+
+**After the budget runs out the link is "down" and stays so** (2026-10-29,
+`ProdigitVisaDriver._mark_down` / `_io_while_down`): every later op fails at once,
+with one reconnect attempt per `_DOWN_RETRY_INTERVAL_S` (5 s), until a reconnect
+succeeds. Before, each op — every unit's teardown, every live poll — spent its
+own 15 s budget on the shared driver, and a Stop after a pulled cable took ~3
+minutes. Stop also calls `abort_io()`: no more reconnect loops, each op is tried
+once, so a teardown `LOAD OFF` still goes out if the link is up. "Lost the
+connection ... reconnected and selected CHn again" is logged only after a
+reconnect really succeeded (it used to be logged on every failed attempt), and
+"no reply after reconnect attempts" once when the link goes down. Load-off
+failures arriving together are shown in one "LOAD MAY STILL BE ON" dialog that
+names the channels. A run that cannot connect says why ("Run did not start"
+shows `TestRunnerThread.connect_error`).
 
 The read failure used to be swallowed (`except Exception: v = None`), which
 skipped the range check: pulling the instrument's cable two minutes into a

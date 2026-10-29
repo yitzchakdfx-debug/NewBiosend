@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import socket
+import struct
 import subprocess
 import sys
 import threading
@@ -16,6 +18,9 @@ _TEXT = {
     "ok": "Load connected",
     "reconnecting": "Load reconnecting...",
     "down": "No connection to load",
+    # Ping answers but the control port does not: seen after a LAN cable was
+    # pulled mid-run (2026-10-29); only a power cycle of the 3300G cleared it.
+    "port": "Load not answering - switch the 3300G off and on",
     "unknown": "Load: not checked",
     "sim": "Simulator",
 }
@@ -25,6 +30,12 @@ def host_from_visa(resource: str) -> str:
     """IP/host of a `TCPIP0::192.168.16.123::4001::SOCKET` resource, else ""."""
     match = re.match(r"^\s*TCPIP\d*::([^:]+)::", resource or "", re.IGNORECASE)
     return match.group(1) if match else ""
+
+
+def port_from_visa(resource: str) -> int | None:
+    """Port of a `TCPIP0::host::4001::SOCKET` resource, else None."""
+    match = re.match(r"^\s*TCPIP\d*::[^:]+::(\d+)::SOCKET", resource or "", re.IGNORECASE)
+    return int(match.group(1)) if match else None
 
 
 class LinkLed(QWidget):
@@ -61,25 +72,52 @@ class LinkLed(QWidget):
 
 
 class PingProbe(QObject):
-    """Pings a host on a background thread; `result(bool)` arrives in the GUI thread.
+    """Checks the load on a background thread; `result(state)` arrives in the GUI thread.
 
-    ICMP only: the 3300G accepts a single TCP connection, and a probe that
-    opened one between runs could block the channel scan or the next run.
+    State is "ok", "port" (ping answers, control port does not) or "down".
+    Ping alone said "connected" while the 3300G's control port was dead after a
+    pulled cable, so with a port the probe also opens a TCP connection and
+    closes it at once with RST (SO_LINGER 0), which frees the instrument's
+    single connection slot in ~0.1 s. The caller only probes between runs and
+    when no dialog (e.g. the channel scan) may be using the port.
     """
 
-    result = Signal(bool)
+    result = Signal(str)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._busy = False
 
-    def probe(self, host: str) -> None:
+    def probe(self, host: str, port: int | None = None) -> None:
         if self._busy or not host:
             return
         self._busy = True
-        threading.Thread(target=self._run, args=(host,), daemon=True).start()
+        threading.Thread(target=self._run, args=(host, port), daemon=True).start()
 
-    def _run(self, host: str) -> None:
+    @staticmethod
+    def _port_open(host: str, port: int) -> bool:
+        try:
+            sock = socket.create_connection((host, port), timeout=2.0)
+        except OSError:
+            return False
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        except OSError:
+            pass
+        sock.close()
+        return True
+
+    def _run(self, host: str, port: int | None) -> None:
+        state = "down"
+        try:
+            if self._ping(host):
+                state = "ok" if port is None or self._port_open(host, port) else "port"
+        finally:
+            self._busy = False
+        self.result.emit(state)
+
+    @staticmethod
+    def _ping(host: str) -> bool:
         ok = False
         try:
             windows = sys.platform.startswith("win")
@@ -90,6 +128,4 @@ class PingProbe(QObject):
             ok = done.returncode == 0 and "ttl=" in done.stdout.lower()
         except Exception:
             ok = False
-        finally:
-            self._busy = False
-        self.result.emit(ok)
+        return ok

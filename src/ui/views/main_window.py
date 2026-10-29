@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import math
+import re
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -68,7 +69,7 @@ from ui.views.test_result_dialog import TestResultDialog
 from ui.views.user_management_dialog import UserManagementDialog
 from ui.views.version_manager_dialog import VersionManagerDialog
 from ui.widgets.control_panel import ControlPanelWidget, UnitProgressRow
-from ui.widgets.link_led import LinkLed, PingProbe, host_from_visa
+from ui.widgets.link_led import LinkLed, PingProbe, host_from_visa, port_from_visa
 from logic import report_paths
 from ui.widgets.result_row_delegate import ResultRowDelegate
 from ui.widgets.wrap_item_delegate import WrapItemDelegate
@@ -644,6 +645,10 @@ class MainWindow(QMainWindow):
         ribbon.addSpacing(24)
         ribbon.addWidget(self.link_led, 0, Qt.AlignmentFlag.AlignVCenter)
         self._link_host = host_from_visa(resolved_visa_resource())
+        self._link_port = port_from_visa(resolved_visa_resource())
+        #: "Load may still be ON" reasons arriving together (one per unit when a
+        #: parallel run loses the link) are shown in one dialog.
+        self._pending_load_off_failures: list[str] = []
         #: A load-off could not be confirmed (link lost / failed). The next
         #: successful ping switches every channel off — see _on_ping_result.
         self._loads_unconfirmed = False
@@ -1705,21 +1710,26 @@ class MainWindow(QMainWindow):
         )
 
     def _probe_link(self) -> None:
-        """Between runs: ping the load (a run reports the real link itself)."""
+        """Between runs: check the load (a run reports the real link itself)."""
         if self._run_active():
             return
         if is_simulated():
             self.link_led.set_state("sim", "HARDWARE_BACKEND is a simulator")
         elif not self._link_host:
             self.link_led.set_state("unknown", "No network address for the load (USB or auto-discovery)")
+        elif QApplication.activeModalWidget() is not None:
+            # A dialog (the channel scan, a run prompt) may be about to use the
+            # load's one connection; the TCP check must not take it.
+            return
         else:
-            self._ping.probe(self._link_host)
+            self._ping.probe(self._link_host, self._link_port)
 
-    def _on_ping_result(self, ok: bool) -> None:
+    def _on_ping_result(self, state: str) -> None:
         if self._run_active():
             return  # a run started meanwhile; its own link events win
-        self.link_led.set_state("ok" if ok else "down", f"Load at {self._link_host} (ping)")
-        if ok and self._loads_unconfirmed:
+        how = "ping + control port" if self._link_port else "ping"
+        self.link_led.set_state(state, f"Load at {self._link_host} ({how})")
+        if state == "ok" and self._loads_unconfirmed:
             self._loads_off_after_reconnect()
 
     def _loads_off_after_reconnect(self) -> None:
@@ -1791,10 +1801,26 @@ class MainWindow(QMainWindow):
         """
         self._record_trace("error", reason)
         self._loads_unconfirmed = True
+        first = not self._pending_load_off_failures
+        self._pending_load_off_failures.append(reason)
+        if first:
+            QTimer.singleShot(1000, self._show_load_off_failures)
+
+    def _show_load_off_failures(self) -> None:
+        """One dialog for every channel whose load-off failed, naming the channels."""
+        reasons, self._pending_load_off_failures = self._pending_load_off_failures, []
+        if not reasons:
+            return
+        channels = sorted(set(re.findall(r"\[(CH\d+)", " ".join(reasons))))
+        head = (
+            f"{', '.join(channels)} may still be ON."
+            if channels
+            else "An electronic load channel may still be ON."
+        )
         QMessageBox.critical(
             self,
             "LOAD MAY STILL BE ON",
-            f"{reason}\n\n"
+            f"{head}\n\n" + "\n\n".join(reasons) + "\n\n"
             "Switch the load off at its front panel, or disconnect the UUT, "
             "before continuing.",
         )
@@ -2570,11 +2596,17 @@ class MainWindow(QMainWindow):
         if nothing_tested:
             # A FAIL banner here would blame a unit that was never tested, and
             # an Operator cannot see the Messages tab that holds the reason.
+            reason = str(getattr(th, "connect_error", "") or "")
             QMessageBox.information(
                 self,
                 "Run did not start",
-                "The run ended before any unit was tested (for example, the "
-                "electronic load did not respond).\n\nNo report was generated.",
+                (
+                    f"Could not connect to the electronic load:\n\n{reason}"
+                    if reason
+                    else "The run ended before any unit was tested (for example, "
+                    "the electronic load did not respond)."
+                )
+                + "\n\nNo report was generated.",
             )
         elif lost:
             self._show_link_lost_message(lost)

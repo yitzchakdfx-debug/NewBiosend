@@ -272,6 +272,10 @@ class TestRunnerThread(QThread):
         # is off (production always runs it as a gate). See test list groups.
         self._polarity_check: bool = polarity_check
         self._stop_requested = False
+        self._link_down_logged = False
+        #: Why the run could not connect to the load ("" if it did); shown to
+        #: the operator instead of a generic "the run did not start".
+        self.connect_error = ""
         # Set once the script is parsed; 0 until then so an early-abort report
         # simply omits the coverage line rather than claiming "0 / 0".
         self._steps_selected: int = 0
@@ -434,6 +438,19 @@ class TestRunnerThread(QThread):
         if detail is not None:
             raise HardwareError(f"load not as set - {detail}")
 
+    def _on_hw_link_state(self, state: str) -> None:
+        """Relay the driver's link state; say once in the log that the link is gone."""
+        self.link_state.emit(state)
+        if state == "down" and not self._link_down_logged:
+            self._link_down_logged = True
+            self._emit_log(
+                "error",
+                "Lost the connection to the electronic load - no reply after "
+                "reconnect attempts. Commands fail until it is back.",
+            )
+        elif state == "ok":
+            self._link_down_logged = False
+
     def _on_hw_reconnect(self, slot: int) -> None:
         self._emit_log(
             "error",
@@ -516,7 +533,7 @@ class TestRunnerThread(QThread):
         if hasattr(self._hw, "on_reconnect"):
             self._hw.on_reconnect = self._on_hw_reconnect  # type: ignore[attr-defined]
         if hasattr(self._hw, "on_link_state"):
-            self._hw.on_link_state = self.link_state.emit  # type: ignore[attr-defined]
+            self._hw.on_link_state = self._on_hw_link_state  # type: ignore[attr-defined]
         self.progress_total.emit(0)
         self.progress_test.emit(0)
         self.current_test.emit("")
@@ -526,6 +543,7 @@ class TestRunnerThread(QThread):
                 try:
                     if not self._hw.connect():
                         self._emit_log("error", "Hardware connect() returned False; aborting.")
+                        self.connect_error = "The electronic load did not accept the connection."
                         self.link_state.emit("down")
                         return
                 except HardwareError as exc:
@@ -1488,6 +1506,7 @@ class TestRunnerThread(QThread):
             "Aborting the run - no test data is produced. Check the cable, "
             "power and PRODIGIT_VISA_RESOURCE, then start again.",
         )
+        self.connect_error = str(last)
         return False
 
     def _force_load_off(self, unit: BatchUnit | None = None) -> bool:
@@ -1511,7 +1530,8 @@ class TestRunnerThread(QThread):
         intervene physically. Software cannot switch off a load it cannot reach;
         the honest outcome is a loud warning, not a silent log line.
         """
-        label = f" [{unit.serial_number}]" if unit is not None else ""
+        # The channel is named so the operator knows which load to switch off.
+        label = f" [CH{unit.slot_index} {unit.serial_number}]" if unit is not None else ""
 
         def _send() -> str:
             # The 3300G applies LOAD OFF to whichever channel was selected last.
@@ -1775,6 +1795,14 @@ class TestRunnerThread(QThread):
 
     def stop(self) -> None:
         self._stop_requested = True
+        # End the driver's reconnect attempts now: with the load's cable out,
+        # each command used to retry for 15 s and a Stop took minutes.
+        abort = getattr(self._hw, "abort_io", None)
+        if callable(abort):
+            try:
+                abort()
+            except Exception:
+                pass
         self._prompt_event.set()
         self._yesno_event.set()
         self._pause_event.set()

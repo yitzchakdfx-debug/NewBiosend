@@ -66,6 +66,10 @@ _RESISTANCE_VERIFY_ATTEMPTS = 2
 _RECONNECT_BUDGET_S = 15.0
 # Pause between a failed op / reconnect attempt and the next retry.
 _RECONNECT_RETRY_DELAY_S = 0.5
+# Once the link is declared down, at most one reconnect attempt per this
+# interval; every other op fails at once. Before (2026-10-29) each op spent a
+# fresh 15 s budget, so after a pulled LAN cable a Stop took ~3 minutes.
+_DOWN_RETRY_INTERVAL_S = 5.0
 # Settle between LOAD OFF and the LOAD? that confirms it. Measured on the
 # station: the state reads back correctly even with no pause; this is margin.
 _LOAD_OFF_VERIFY_SETTLE_S = 0.2
@@ -94,16 +98,21 @@ def _connect_error_message(exc: Exception) -> str:
     """
     detail = str(exc)
     if _VI_ERROR_CONN_REFUSED not in detail:
-        return f"Failed to connect to Prodigit VISA device: {detail}"
+        return (
+            f"Failed to connect to Prodigit VISA device: {detail}\n"
+            "If the load answers ping but not this connection - typically after "
+            "its LAN cable was unplugged during a run - switch the 3300G off and "
+            "on, then try again."
+        )
     return (
         "The electronic load refused the connection. It accepts only ONE "
         "connection at a time, so something is probably still holding it:\n"
         "  • another copy of this application,\n"
         "  • a leftover process from a previous session,\n"
         "  • a terminal/bench tool connected to the same port, or\n"
-        "  • a session dropped by an unplugged cable, which the instrument "
-        "keeps open until it times out (this clears on its own, typically "
-        "within a couple of minutes).\n"
+        "  • a session dropped by an unplugged cable. The 3300G may keep it "
+        "(or stop accepting connections) indefinitely: if this does not clear "
+        "within a minute, switch the 3300G off and on.\n"
         f"Underlying VISA error: {detail}"
     )
 
@@ -115,7 +124,9 @@ def _tune_socket(resource: Any) -> None:
     the device being told — a yanked cable, a killed process — it keeps the slot
     until its own timeout expires, which is minutes. During that window every
     new connect fails with ``-1073807339``, from any process, so restarting the
-    app does not help and only waiting does.
+    app does not help. On the station (2026-10-29) a cable pulled mid-run left
+    the control port dead for good (ping still answered): only a power cycle of
+    the 3300G clears that.
 
     Two settings shrink that window:
 
@@ -208,6 +219,13 @@ class ProdigitVisaDriver(BaseDriver):
         #: Called with "reconnecting" / "ok" / "down" as the link fails, comes
         #: back or is given up on — drives the toolbar's load-link indicator.
         self.on_link_state: Callable[[str], None] | None = None
+        #: Set when the reconnect budget runs out: later I/O fails at once, with
+        #: one reconnect attempt per `_DOWN_RETRY_INTERVAL_S`, instead of every
+        #: op spending its own budget. Cleared by a successful reconnect.
+        self._link_down = False
+        self._last_down_retry = 0.0
+        #: Set by `abort_io` (Stop): no reconnect loops, each op is tried once.
+        self._abort = False
         self._timeout_ms = (
             int(timeout_ms)
             if timeout_ms
@@ -267,6 +285,7 @@ class ProdigitVisaDriver(BaseDriver):
         except Exception as exc:
             raise HardwareError(_connect_error_message(exc)) from exc
 
+        self._link_down = False
         if self._probe_identity:
             try:
                 _ = self.execute_command("getid", [])
@@ -274,6 +293,14 @@ class ProdigitVisaDriver(BaseDriver):
                 # A real unit should still be usable even if *IDN? is not supported.
                 pass
         return True
+
+    def abort_io(self) -> None:
+        """Stop pressed: end reconnect attempts now; each later op is tried once.
+
+        A teardown `LOAD OFF` still goes out if the link is up; if it is down,
+        it fails at once rather than after minutes of retries.
+        """
+        self._abort = True
 
     def disconnect(self) -> None:
         """Drop the load, then close the VISA resource.
@@ -496,8 +523,17 @@ class ProdigitVisaDriver(BaseDriver):
         tries, for up to ``_RECONNECT_BUDGET_S``. If it still fails after that,
         the last error propagates so the run aborts as it did before.
         """
-        if not self._reconnect_on_error:
-            return op()  # scan mode: a failed read is expected, fail it fast
+        if not self._reconnect_on_error or self._reconnecting:
+            # Scan mode (a failed read is expected), or a reconnect's own probe.
+            return op()
+        if self._link_down:
+            return self._io_while_down(op)
+        if self._abort:
+            try:
+                return op()
+            except Exception:
+                self._mark_down()
+                raise
         deadline = time.monotonic() + _RECONNECT_BUDGET_S
         retried = False
         while True:
@@ -507,23 +543,44 @@ class ProdigitVisaDriver(BaseDriver):
                     self._notify_link("ok")
                 return result
             except Exception:
-                # Don't recurse while a reconnect's own probe I/O is running,
-                # and give up once the reconnect budget is exhausted.
-                if self._reconnecting:
-                    raise
-                if time.monotonic() >= deadline:
-                    self.link_lost_count += 1
-                    self._notify_link("down")
+                if self._abort or time.monotonic() >= deadline:
+                    self._mark_down()
                     raise
                 if not retried:
                     self._notify_link("reconnecting")
                 retried = True
-                self._attempt_reconnect()
-                self._reselect_slot()
+                if self._attempt_reconnect():
+                    self._reselect_slot()
                 time.sleep(_RECONNECT_RETRY_DELAY_S)
 
-    def _attempt_reconnect(self) -> None:
-        """Best-effort close + reopen of the VISA resource (errors swallowed)."""
+    def _mark_down(self) -> None:
+        """The link is lost: count it (the unit gets no report) and fail fast from now."""
+        self.link_lost_count += 1
+        self._link_down = True
+        self._last_down_retry = time.monotonic()
+        self._notify_link("down")
+
+    def _io_while_down(self, op: Any) -> Any:
+        """Link down: one reconnect attempt per interval, otherwise fail at once."""
+        now = time.monotonic()
+        if not self._abort and now - self._last_down_retry >= _DOWN_RETRY_INTERVAL_S:
+            self._last_down_retry = now
+            if self._attempt_reconnect():
+                self._link_down = False
+                self._reselect_slot()
+                self._notify_link("ok")
+                try:
+                    return op()
+                except Exception:
+                    self._mark_down()
+                    raise
+        # Counted like the budget running out: whatever this op belonged to
+        # ran without the instrument, so it must not produce a report.
+        self.link_lost_count += 1
+        raise HardwareError("No connection to the electronic load (the link was lost).")
+
+    def _attempt_reconnect(self) -> bool:
+        """Close + reopen the VISA resource; True if the reopen succeeded."""
         self._reconnecting = True
         try:
             try:
@@ -533,7 +590,8 @@ class ProdigitVisaDriver(BaseDriver):
             try:
                 self.connect()
             except Exception:
-                pass
+                return False
+            return self._ctx is not None
         finally:
             self._reconnecting = False
 
@@ -545,7 +603,7 @@ class ProdigitVisaDriver(BaseDriver):
                 pass
 
     def _reselect_slot(self) -> None:
-        """Select the active channel again on a fresh connection.
+        """Select the active channel again on a fresh connection (only after a real reconnect).
 
         The retried op is only the command itself. Without this, a reconnect
         mid-run sent it to whatever channel the mainframe had selected: on the
