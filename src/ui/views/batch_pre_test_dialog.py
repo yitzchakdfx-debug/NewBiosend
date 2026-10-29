@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import QEvent, Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -296,9 +296,11 @@ class BatchPreTestDialog(QDialog):
             edit = QLineEdit()
             edit.setPlaceholderText("Scan or type serial number")
             edit.setEnabled(False)  # enabled only when its channel is ticked
-            edit.returnPressed.connect(
-                lambda idx=idx: self._focus_next_serial_field(idx)
-            )
+            # Enter is handled in `eventFilter`, not via `returnPressed`: a
+            # barcode scanner ends each serial with Enter, and the dialog also
+            # sent that Enter to its default OK button - a red "missing serial"
+            # after every scan, and the run starting by itself after the last.
+            edit.installEventFilter(self)
             self._serial_edits.append(edit)
 
             chk = QCheckBox()
@@ -334,6 +336,17 @@ class BatchPreTestDialog(QDialog):
                 self._serial_edits[idx].setFocus(Qt.FocusReason.OtherFocusReason)
                 break
 
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt name)
+        """Enter in a serial field moves to the next field and stops there."""
+        if (
+            event.type() == QEvent.Type.KeyPress
+            and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+            and obj in self._serial_edits
+        ):
+            self._focus_next_serial_field(self._serial_edits.index(obj))
+            return True  # consumed: never reaches the OK button
+        return super().eventFilter(obj, event)
+
     def _focus_next_serial_field(self, current_index: int) -> None:
         for i in range(current_index + 1, len(self._serial_edits)):
             nxt = self._serial_edits[i]
@@ -341,6 +354,13 @@ class BatchPreTestDialog(QDialog):
                 nxt.setFocus(Qt.FocusReason.TabFocusReason)
                 nxt.selectAll()
                 return
+        # Last serial scanned: on to the first unticked LED box, else to OK -
+        # the operator confirms the LEDs and starts the run, not the scanner.
+        for led in self._led_checks:
+            if led.isEnabled() and not led.isChecked():
+                led.setFocus(Qt.FocusReason.TabFocusReason)
+                return
+        self._ok_btn.setFocus(Qt.FocusReason.TabFocusReason)
 
     # ------------------------------------------------------------------
     # Validation & result
