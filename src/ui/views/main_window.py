@@ -144,6 +144,9 @@ class MainWindow(QMainWindow):
         self._part_number_user_edited = False
         self._catalog_test_name: str = Path(_DEFAULT_SCRIPT_NAME).stem
         self._catalog_uut_type: str = ""
+        #: Catalog id of the active version (None for the bundled default file),
+        #: so deleting it in the Version Manager can move the window off it.
+        self._catalog_version_id: int | None = None
         self._operator_temp_script: Path | None = None
         self._pre_test_locked: bool = False
         try:
@@ -328,18 +331,33 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         dialog.exec()
-        if dialog.created_version_id is None:
+        if dialog.created_version_id is not None:
+            rec = DatabaseManager().get_test_version(dialog.created_version_id)
+            # Like the Limits editor: the version just stored is what runs next.
+            if rec is not None and self._activate_catalog_content(
+                str(rec["test_name"]), str(rec["version_name"]), str(rec["uut_type"]),
+                str(rec["test_content"]), rec["id"],
+            ):
+                QMessageBox.information(
+                    self, "Versions", f"Active test is now {rec['test_name']} {rec['version_name']}."
+                )
             return
-        rec = DatabaseManager().get_test_version(dialog.created_version_id)
-        if rec is None:
-            return  # created and deleted again in the same session
-        # Like the Limits editor: the version just stored is what runs next.
-        if self._activate_catalog_content(
-            str(rec["test_name"]), str(rec["version_name"]), str(rec["uut_type"]), str(rec["test_content"])
+        if self._catalog_version_id is None or self._catalog_version_id not in dialog.deleted_ids:
+            return
+        # The active version was deleted: reports must not name a version that
+        # no longer exists, so move to the newest one left (or to none).
+        old = f"{self._catalog_test_name} {self._catalog_version}".strip()
+        rec = DatabaseManager().latest_test_version()
+        if rec is not None and self._activate_catalog_content(
+            str(rec["test_name"]), str(rec["version_name"]), str(rec["uut_type"]),
+            str(rec["test_content"]), rec["id"],
         ):
-            QMessageBox.information(
-                self, "Versions", f"Active test is now {rec['test_name']} {rec['version_name']}."
-            )
+            text = f"The active test {old} was deleted - now on {rec['test_name']} {rec['version_name']}."
+        else:
+            self._clear_active_test("No test - use Select Product.")
+            text = f"The active test {old} was deleted - choose a test with Select Product."
+        self.append_trace(text)
+        QMessageBox.information(self, "Versions", text)
 
     def open_audit_viewer(self) -> None:
         if not self._can(Capability.VIEW_AUDIT_LOG):
@@ -416,13 +434,18 @@ class MainWindow(QMainWindow):
         if saved is None:
             return
         version, content = saved
+        test_name = self._catalog_test_name or self._active_script_path.stem
+        version_id = next(
+            (
+                int(v["id"]) for v in DatabaseManager().list_test_versions()
+                if v["test_name"] == test_name and v["version_name"] == version
+            ),
+            None,
+        )
         # The new version becomes the active test at once, so the next run and
         # its report are that version (not the one the editor was opened on).
         self._activate_catalog_content(
-            self._catalog_test_name or self._active_script_path.stem,
-            version,
-            self._catalog_uut_type,
-            content,
+            test_name, version, self._catalog_uut_type, content, version_id
         )
 
     def reset_counters(self) -> None:
@@ -1101,21 +1124,57 @@ class MainWindow(QMainWindow):
             str(catalog.get("test_name", path.stem)),
             str(catalog.get("version_name", "")),
             str(catalog.get("uut_type", "")),
+            catalog.get("id"),
         )
 
-    def _activate_script_file(self, path: Path, test_name: str, version: str, uut_type: str) -> None:
+    def _activate_script_file(
+        self,
+        path: Path,
+        test_name: str,
+        version: str,
+        uut_type: str,
+        version_id: int | None = None,
+        *,
+        quiet: bool = False,
+    ) -> None:
         """Make a catalog version (already written to `path`) the active test."""
         self._cleanup_operator_temp()
         self._operator_temp_script = path
         self._active_script_path = path
         self._catalog_test_name = test_name
         self._catalog_version = version
+        self._catalog_version_id = int(version_id) if version_id is not None else None
         self._catalog_uut_type = uut_type
         self.control_panel.edit_uut_type.setText(uut_type)
-        self._reload_script_into_list()
+        self._reload_script_into_list(quiet=quiet)
 
-    def _activate_catalog_content(self, test_name: str, version: str, uut_type: str, content: str) -> bool:
-        """Write a catalog version to a temp file and make it the active test."""
+    def _clear_active_test(self, label: str) -> None:
+        """No active test (e.g. its catalog version was deleted)."""
+        self._cleanup_operator_temp()
+        self._active_script_path = Path()
+        self._active_document = None
+        self.test_list.clear()
+        self._catalog_test_name = ""
+        self._catalog_version = ""
+        self._catalog_version_id = None
+        self._catalog_uut_type = ""
+        self.label_active_script.setText(label)
+
+    def _activate_catalog_content(
+        self,
+        test_name: str,
+        version: str,
+        uut_type: str,
+        content: str,
+        version_id: int | None = None,
+        *,
+        quiet: bool = False,
+    ) -> bool:
+        """Write a catalog version to a temp file and make it the active test.
+
+        True only if the script also parsed: a version that does not leaves an
+        empty test list, which must not count as "started on a test".
+        """
         try:
             tmp_dir = user_tmp_path()
             tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -1124,26 +1183,47 @@ class MainWindow(QMainWindow):
         except OSError as exc:
             QMessageBox.critical(self, "Test", f"Could not create temp file:\n{exc}")
             return False
-        self._activate_script_file(path, test_name, version, uut_type)
-        return True
+        self._activate_script_file(path, test_name, version, uut_type, version_id, quiet=quiet)
+        return self._active_document is not None
 
     def _load_latest_version(self) -> bool:
-        """Start with the newest catalog version; False if the catalog is empty."""
+        """Start with the newest catalog version; False if there is none usable.
+
+        Quiet: at startup the window is not shown yet, so a parse error is
+        logged rather than popped up, and the old start (Select Product) runs.
+        """
         try:
             rec = DatabaseManager().latest_test_version()
         except Exception:
             rec = None
         if not rec:
             return False
-        return self._activate_catalog_content(
+        if self._activate_catalog_content(
             str(rec["test_name"]),
             str(rec["version_name"]),
             str(rec["uut_type"]),
             str(rec["test_content"]),
+            rec.get("id"),
+            quiet=True,
+        ):
+            return True
+        self.append_trace(
+            f"Latest catalog version {rec['test_name']} {rec['version_name']} could not be "
+            "loaded - choose a test with Select Product."
         )
+        self._cleanup_operator_temp()
+        self._active_script_path = self._script_manager.scripts_dir / _DEFAULT_SCRIPT_NAME
+        self._catalog_test_name = Path(_DEFAULT_SCRIPT_NAME).stem
+        self._catalog_version = ""
+        self._catalog_version_id = None
+        self._catalog_uut_type = ""
+        return False
 
-    def _reload_script_into_list(self) -> None:
-        """Parse the active script and repopulate the test list checkboxes."""
+    def _reload_script_into_list(self, *, quiet: bool = False) -> None:
+        """Parse the active script and repopulate the test list checkboxes.
+
+        `quiet` logs a parse/load error instead of showing a dialog.
+        """
         self.test_list.clear()
         self._active_document = None
         logical_name = f"{self._catalog_test_name} {getattr(self, '_catalog_version', '')}".strip()
@@ -1159,17 +1239,21 @@ class MainWindow(QMainWindow):
             document = self._script_manager.load_document(self._active_script_path)
             steps = document.steps
         except ScriptParseError as exc:
-            QMessageBox.warning(
-                self,
-                "Script parse error",
-                f"Could not parse {self._active_script_path.name}:\n"
-                f"line {exc.line_no}: {exc.msg}",
-            )
+            if not quiet:
+                QMessageBox.warning(
+                    self,
+                    "Script parse error",
+                    f"Could not parse {self._active_script_path.name}:\n"
+                    f"line {exc.line_no}: {exc.msg}",
+                )
             self.append_trace(
                 f"Script parse error at line {exc.line_no}: {exc.msg}"
             )
             return
         except (OSError, ValueError) as exc:
+            if quiet:
+                self.append_trace(f"Could not load {self._active_script_path.name}: {exc}")
+                return
             QMessageBox.warning(
                 self,
                 "Script load error",

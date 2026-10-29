@@ -86,7 +86,12 @@ class VersionManagerDialog(QDialog):
         self._employee_id = employee_id.strip()
         #: Id of the last version this dialog stored; the main window makes it
         #: the active test when the dialog closes.
-        self.created_version_id: int | None = None
+        #: Ids created in this dialog, oldest first; `created_version_id` is the
+        #: newest still present, so "create A, create B, delete B" leaves A.
+        self._created_ids: list[int] = []
+        #: Ids deleted in this dialog; the main window moves off its active
+        #: version if it is among them.
+        self.deleted_ids: set[int] = set()
         self.setWindowTitle("Product Version Manager")
         self.resize(920, 480)
 
@@ -152,6 +157,16 @@ class VersionManagerDialog(QDialog):
             return None
         data = it.data(Qt.ItemDataRole.UserRole)
         return int(data) if data is not None else None
+
+    @property
+    def created_version_id(self) -> int | None:
+        """The newest version stored in this dialog and not deleted again, else None."""
+        return self._created_ids[-1] if self._created_ids else None
+
+    @created_version_id.setter
+    def created_version_id(self, version_id: int | None) -> None:
+        if version_id is not None:
+            self._created_ids.append(int(version_id))
 
     def _ask_version_name(self, test_name: str, prompt: str) -> str | None:
         """Ask until the name is valid and free; None if the user cancels.
@@ -408,7 +423,23 @@ class VersionManagerDialog(QDialog):
             != QMessageBox.StandardButton.Yes
         ):
             return
+        rec = self._db.get_test_version(vid)
         self._db.delete_test_version(vid)
+        self.deleted_ids.add(vid)
+        if vid in self._created_ids:
+            self._created_ids.remove(vid)
+        try:
+            self._db.log_audit_action(
+                "Deleted test version",
+                username=self._user,
+                employee_id=self._employee_id,
+                details=(
+                    f"test={rec['test_name']!r} version={rec['version_name']!r}"
+                    if rec else f"id={vid}"
+                ),
+            )
+        except Exception:
+            pass
         self._populate()
 
     def _export(self) -> None:
