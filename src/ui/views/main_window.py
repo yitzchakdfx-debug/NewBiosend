@@ -43,7 +43,8 @@ import threading
 
 import shiboken6
 
-from config import LOAD_SERIALS, SHOW_NIGHT_MODE, SHOW_SEARCH_BAR
+from config import SHOW_NIGHT_MODE, SHOW_SEARCH_BAR
+from logic.load_serials import load_serials
 from drivers.base_driver import BaseDriver, HardwareError
 from drivers.factory import create_driver, is_simulated, resolve_station_config, resolved_visa_resource
 from logic.database_manager import DatabaseManager
@@ -2006,7 +2007,7 @@ class MainWindow(QMainWindow):
                 # switched off a single channel of up to four. Select each in
                 # turn, and read each back.
                 verify = getattr(driver, "load_off_verified", None)
-                for slot, load_serial in enumerate(LOAD_SERIALS or [""], start=1):
+                for slot, load_serial in enumerate(load_serials(), start=1):
                     try:
                         if hasattr(driver, "activate_slot"):
                             driver.activate_slot(slot, load_serial_number=load_serial)

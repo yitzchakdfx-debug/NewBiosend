@@ -22,7 +22,8 @@ from PySide6.QtWidgets import (
 )
 
 from config import HARDWARE_BACKEND, INSTRUMENTS, PRODIGIT_VISA_RESOURCE
-from drivers.factory import BACKEND_SETTING_KEY, LOAD_RESOURCE_KEY, RESULTS_DIR_KEY, XML_DIR_KEY
+from drivers.factory import BACKEND_SETTING_KEY, LOAD_RESOURCE_KEY, RESULTS_DIR_KEY, XML_DIR_KEY, load_serial_key
+from logic import load_serials as load_serial_config
 from logic import report_paths
 from logic.database_manager import DatabaseManager
 
@@ -46,7 +47,7 @@ class ConnectionsDialog(QDialog):
         self._employee_id = employee_id
 
         self.setWindowTitle("Connections")
-        self.resize(560, 200 + len(INSTRUMENTS) * 36)
+        self.resize(560, 360 + len(INSTRUMENTS) * 36)
 
         root = QVBoxLayout(self)
 
@@ -141,6 +142,37 @@ class ConnectionsDialog(QDialog):
         line2.setFrameShape(QFrame.Shape.HLine)
         line2.setFrameShadow(QFrame.Shadow.Sunken)
         root.addWidget(line2)
+
+        # --- Load module serial numbers ----------------------------------------
+        # The 3316G cannot report its serial over the link, so it is typed here
+        # once, from the module's label. Printed in every later report (PDF
+        # header and XML ChannelID); applies to the next run, no restart.
+        root.addWidget(QLabel("<b>Load modules (3316G)</b>"))
+        serials_form = QFormLayout()
+        serials_form.setContentsMargins(0, 4, 0, 4)
+        serials_form.setHorizontalSpacing(12)
+        self._serial_edits: dict[int, QLineEdit] = {}
+        self._initial_serials: dict[int, str] = {}
+        for slot in range(1, load_serial_config.channel_count() + 1):
+            initial = stored_settings.get(load_serial_key(slot), "").strip()
+            edit = QLineEdit(initial)
+            edit.setObjectName(f"conn_load_serial_{slot}")
+            edit.setPlaceholderText(f"blank = {load_serial_config.env_serial(slot)}  (.env)")
+            self._serial_edits[slot] = edit
+            self._initial_serials[slot] = initial
+            serials_form.addRow(f"CH{slot} S/N", edit)
+        root.addLayout(serials_form)
+        serials_note = QLabel(
+            "The serial number from each module's label. Shown in the report for "
+            "the unit tested on that channel; takes effect on the next run."
+        )
+        serials_note.setWordWrap(True)
+        root.addWidget(serials_note)
+
+        line3 = QFrame()
+        line3.setFrameShape(QFrame.Shape.HLine)
+        line3.setFrameShadow(QFrame.Shadow.Sunken)
+        root.addWidget(line3)
 
         # --- Per-instrument connection strings --------------------------------
         root.addWidget(QLabel("<b>Other instruments</b>"))
@@ -251,6 +283,14 @@ class ConnectionsDialog(QDialog):
         _write(LOAD_RESOURCE_KEY, load_value, "load address", self._initial_load)
         _write(RESULTS_DIR_KEY, results_value, f"reports folder={results_value or 'default'}", self._initial_results)
         _write(XML_DIR_KEY, xml_value, f"XML folder={xml_value or 'default'}", self._initial_xml)
+        for slot, edit in self._serial_edits.items():
+            serial = edit.text().strip()
+            _write(
+                load_serial_key(slot),
+                serial,
+                f"CH{slot} S/N={serial or load_serial_config.env_serial(slot) + ' (.env)'}",
+                self._initial_serials[slot],
+            )
 
         for name, edit in self._fields.items():
             _write(name, edit.text().strip(), name, stored.get(name, ""))

@@ -508,6 +508,18 @@ ran — while its own load stayed on. It now calls `activate_slot` and `loadoff`
 inside the same `hw_lock`, like `_hw_execute`. `_release_load_on_exit` likewise
 selects and switches off every channel in `LOAD_SERIALS` instead of one.
 
+**Load module serial numbers** (2026-10-29, `logic/load_serials.py`). The 3316G
+cannot report its serial over the link (`*IDN?`, `NAME?`, `CHAN n;*IDN?` and
+guessed queries probed 29/10: models only or no reply). The Admin types each
+module's S/N in Connections > "Load modules (3316G)"; it is stored per channel
+(`factory.load_serial_key(slot)` in `instrument_connections`, audit-logged) and
+resolved on every call: database, then `.env` `LOAD_SERIALS`, then `LOAD-CH<n>`.
+Every former `config.LOAD_SERIALS` reader (pre-test scan and units, the
+single-unit default in the engine, `_switch_all_loads_off`) uses
+`load_serials()` / `serial_for()`, so the report — PDF "CH2 / <S/N>", XML
+`<ChannelID>` — shows the Admin's value from the next run, no restart.
+`LOAD_SERIALS` still sets the channel count.
+
 **Every engine and exit load-off is read back** (2026-10-18). A station run with
 three units logged "Load off confirmed" for each while all three loads stayed on:
 a write over TCP "succeeds" even when the instrument has stopped processing

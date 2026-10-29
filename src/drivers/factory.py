@@ -47,6 +47,11 @@ RESULTS_DIR_KEY = "__results_dir__"
 XML_DIR_KEY = "__xml_dir__"
 
 
+def load_serial_key(slot: int) -> str:
+    """Database key of the Admin-entered S/N of the load module on channel `slot`."""
+    return f"__load_serial_{int(slot)}__"
+
+
 def _stored_settings() -> dict[str, str]:
     """Admin overrides from the database, or {} if it cannot be read.
 

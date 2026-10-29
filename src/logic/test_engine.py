@@ -27,8 +27,8 @@ from config import (
     LOAD_RESISTANCE_50W_OHM,
     LOAD_RESISTANCE_100W_OHM,
     LOAD_RESISTANCE_300W_OHM,
-    LOAD_SERIALS,
 )
+from logic.load_serials import serial_for
 from drivers.base_driver import BaseDriver, HardwareError
 from drivers.factory import create_driver
 from logic.database_manager import DatabaseManager
@@ -327,7 +327,7 @@ class TestRunnerThread(QThread):
         if batch_units:
             self._batch_units = list(batch_units)
         else:
-            load_serial = LOAD_SERIALS[0] if LOAD_SERIALS else "LOAD-CH1"
+            load_serial = serial_for(1)
             self._batch_units = [
                 BatchUnit(
                     serial_number=serial_number.strip(),

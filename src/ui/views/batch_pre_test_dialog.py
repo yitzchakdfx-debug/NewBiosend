@@ -19,7 +19,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from config import LOAD_SERIALS, UUT_TYPES
+from config import UUT_TYPES
+from logic.load_serials import load_serials
 from logic.models import BatchUnit
 
 # Two slots reading within this many volts of each other during the scan are
@@ -81,7 +82,7 @@ class _ScanThread(QThread):
         # reading is trusted even if it equals another slot's: one supply wired
         # to two loads reads the same voltage on both, and is two real channels.
         confirmed: set[int] = set()
-        for idx, load_serial in enumerate(LOAD_SERIALS):
+        for idx, load_serial in enumerate(load_serials()):
             slot = idx + 1
             try:
                 if hasattr(driver, "activate_slot"):
@@ -284,12 +285,12 @@ class BatchPreTestDialog(QDialog):
             lbl.setObjectName("lbl_batch_header")
             self._grid.addWidget(lbl, 0, col)
 
-        for idx in range(len(LOAD_SERIALS)):
+        # Read once per dialog: the serials the Admin set in Connections.
+        self._load_serials = load_serials()
+        for idx in range(len(self._load_serials)):
             slot = idx + 1
             self._slot_indices.append(slot)
-            load_serial_str = (
-                LOAD_SERIALS[slot - 1] if slot - 1 < len(LOAD_SERIALS) else f"LOAD-{slot}"
-            )
+            load_serial_str = self._load_serials[slot - 1]
             row = idx + 1
 
             edit = QLineEdit()
@@ -426,7 +427,7 @@ class BatchPreTestDialog(QDialog):
     def _unit_for_row(self, idx: int, *, led_verdict: bool | None) -> BatchUnit:
         slot = self._slot_indices[idx] if idx < len(self._slot_indices) else idx + 1
         load_serial = (
-            LOAD_SERIALS[slot - 1] if slot - 1 < len(LOAD_SERIALS) else f"LOAD-{slot}"
+            self._load_serials[slot - 1] if slot - 1 < len(self._load_serials) else f"LOAD-{slot}"
         )
         return BatchUnit(
             serial_number=self._serial_edits[idx].text().strip(),
