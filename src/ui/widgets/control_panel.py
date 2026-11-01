@@ -170,6 +170,11 @@ class UnitProgressRow(QWidget):
                 self._step.setText("-")
             return
         self._done = False
+        # A step is running, so the unit is too. The runner announces "" (no
+        # step) when it starts; without this reset every row stayed "finished"
+        # for the whole run, and the Total bar showed the most advanced unit -
+        # jumping to ~97 % when one unit failed - instead of the slowest one.
+        self.finished = False
         self._started = time.monotonic()
         self._total_s = self._duration_lookup(name) if self._duration_lookup else None
         self.bar.setValue(0)
