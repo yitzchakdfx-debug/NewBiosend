@@ -93,6 +93,7 @@ src/
     database.db        # SQLite
     logs/              # encrypted sys_YYYYMMDD.dat files
     results/           # archived PDFs under <UUT>/<Serial>_<dd-mm-yyyy>_<HHhMMmSSs>/
+                       #   files named YYYYMMDD_HHMM_<SN>.pdf / .xml (customer POD)
                        #   one folder per test, named by serial and test start,
                        #   day first, e.g. 2456_19-10-2026_13h06m53s (2026-10-28)
                        # results/XML/: a copy of every CAMSTAR XML report

@@ -67,7 +67,7 @@ def sanitize_path_segment(value: str) -> str:
 
 
 class ReportGenerator:
-    """Writes PDF archives under src/data/results/<UUT>/<Serial>_<dd-mm-yyyy>_<HHhMMmSSs>/ and optional manual exports."""
+    """Writes PDF/XML archives under data/results/<UUT>/<Serial>_<dd-mm-yyyy>_<HHhMMmSSs>/ as YYYYMMDD_HHMM_<SN>.pdf/.xml, and optional manual exports."""
 
     def __init__(self, base_dir: Path | None = None) -> None:
         self._base = base_dir if base_dir is not None else report_paths.results_dir()
@@ -127,22 +127,15 @@ class ReportGenerator:
         """
         uut_seg = sanitize_path_segment(str(run_meta.get("uut_type", "")).strip())
         sn_seg = sanitize_path_segment(str(run_meta.get("serial_number", "")).strip())
-        test_name_meta = str(run_meta.get("test_program_name", "report")).strip()
-        stem_test = sanitize_path_segment(test_name_meta)
 
         try:
             started = datetime.fromisoformat(str(run_meta.get("start_time", "")))
         except ValueError:
             started = datetime.now()
         archive_dir = self._base / uut_seg / f"{sn_seg}_{started.strftime('%d-%m-%Y_%Hh%Mm%Ss')}"
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        stem = "_".join(
-            [
-                stem_test,
-                ts,
-                sn_seg,
-            ]
-        )
+        # Customer POD: every PDF and XML is named YYYYMMDD_HHMM_SN, from the
+        # unit's test start, so the two files of one test share one identifier.
+        stem = f"{started.strftime('%Y%m%d_%H%M')}_{sn_seg}"
         return archive_dir, stem
 
     def generate_pdf_auto_archive(
@@ -156,7 +149,7 @@ class ReportGenerator:
         _reject_if_reports_forbidden(role_key)
         return self._write_archived(
             run_meta,
-            lambda stem: f"{stem}_{role_key.replace(' ', '_')}.pdf",
+            lambda stem: f"{stem}.pdf",
             lambda path: write_pdf_report(path, run_meta, results, role_key),
         )
 

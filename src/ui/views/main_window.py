@@ -563,8 +563,7 @@ class MainWindow(QMainWindow):
         rg = ReportGenerator()
         archive_dir, stem = rg._resolved_archive_paths(self._last_run_meta)
         archive_dir.mkdir(parents=True, exist_ok=True)  # may not exist when "Save as log" is off
-        role_key = self._current_role().replace(" ", "_")
-        suggested = archive_dir / f"{stem}_{role_key}.pdf"
+        suggested = archive_dir / f"{stem}.pdf"
         
         selected, _ = QFileDialog.getSaveFileName(
             self,

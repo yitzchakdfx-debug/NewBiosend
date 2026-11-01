@@ -41,6 +41,15 @@ from logic.report_templates import (
 )
 import json
 
+#: Shown at the top of the XML tab. The XML layout is the interface the
+#: customer's MES (CAMSTAR) was built against, so an edit here is not cosmetic.
+_MES_WARNING_HTML = (
+    "<p style='color:#b00020; font-weight:bold;'>WARNING: the XML structure is the "
+    "interface to the customer's MES (CAMSTAR). Renaming, adding, removing or "
+    "reordering elements can make the MES reject every report. Change it only "
+    "together with the MES side.</p>"
+)
+
 
 class _TemplateTab(QWidget):
     """One template: a monospaced editor, a validate button, and a reset."""
@@ -127,6 +136,9 @@ class ReportTemplatesDialog(QDialog):
         self.resize(900, 700)
 
         ensure_templates_seeded()
+        # What was saved when the dialog opened, to warn only on a real change.
+        self._initial_xml = read_xml_template()
+        self._initial_sections = read_pdf_template().get("test_sections")
 
         layout = QVBoxLayout(self)
         layout.addWidget(
@@ -136,6 +148,7 @@ class ReportTemplatesDialog(QDialog):
         self.tabs = QTabWidget()
         self.tab_xml = _TemplateTab(
             description=(
+                f"{_MES_WARNING_HTML}<br>"
                 "<b>XML report template (CAMSTAR).</b> Replace values with "
                 "<code>{{placeholders}}</code>. The empty <code>&lt;Tests/&gt;</code> "
                 "element marks where the measured results are inserted - keep it "
@@ -191,6 +204,9 @@ class ReportTemplatesDialog(QDialog):
                 )
                 return
 
+        if not self._confirm_mes_impact():
+            return
+
         try:
             write_xml_template(self.tab_xml.text())
             write_pdf_template(self.tab_pdf.text())
@@ -214,3 +230,39 @@ class ReportTemplatesDialog(QDialog):
             "Report templates saved. They apply to the next generated report.",
         )
         self.accept()
+
+    def _confirm_mes_impact(self) -> bool:
+        """Ask before saving a change that alters the XML the MES reads.
+
+        The XML layout is the agreed interface with CAMSTAR: the customer's MES
+        parses it by element name and test order. Both the XML template and the
+        PDF `test_sections` (which orders the XML tests) can change it.
+        """
+        xml_changed = self.tab_xml.text().strip() != self._initial_xml.strip()
+        try:
+            order_changed = (
+                json.loads(self.tab_pdf.text()).get("test_sections")
+                != self._initial_sections
+            )
+        except (ValueError, AttributeError):
+            order_changed = False
+        if not (xml_changed or order_changed):
+            return True
+        what = []
+        if xml_changed:
+            what.append("the XML report template")
+        if order_changed:
+            what.append("the test order (test_sections), which also orders the XML")
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Warning - MES / CAMSTAR interface")
+        box.setText(
+            f"You changed {' and '.join(what)}.\n\n"
+            "The XML report structure is the agreed interface with the customer's "
+            "MES (CAMSTAR). Renaming, adding, removing or reordering elements can "
+            "make the MES reject every report from now on.\n\n"
+            "Save only if the MES side has been updated to match."
+        )
+        box.setStandardButtons(QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        return box.exec() == QMessageBox.StandardButton.Save
