@@ -72,6 +72,9 @@ def _run(app: QApplication) -> int:
         from ui.views.main_window import MainWindow
 
         ensure_templates_seeded()
+        from logic.catalog_seed import seed_catalog_if_empty
+
+        seed_catalog_if_empty()  # fresh install: the product test is ready to run
     except Exception as exc:
         QMessageBox.critical(
             None,

@@ -119,7 +119,7 @@ class MainWindow(QMainWindow):
     def __init__(self, user_info: dict) -> None:
         super().__init__()
         self._user_info = user_info
-        self.setWindowTitle("DFX Tester - Component ATE")
+        self.setWindowTitle("DFX Tester - EM-5406 Power Supply Load Test")
         icon_path = self._ICONS_DIR / "DFXAppIcon.png"
         if icon_path.is_file():
             self.setWindowIcon(QIcon(str(icon_path)))
@@ -230,9 +230,9 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self,
             "About DFX Tester",
-            "<b>DFX Tester - Component ATE</b><br>"
+            "<b>DFX Tester - EM-5406 Power Supply Load Test</b><br>"
             f"Version {__version__}<br><br>"
-            "In development.",
+            "Electronic load: Prodigit 3300G / 3316G (CR mode).",
         )
 
     def _setup_menu_bar(self) -> None:
