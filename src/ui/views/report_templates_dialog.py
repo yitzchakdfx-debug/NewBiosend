@@ -164,8 +164,9 @@ class ReportTemplatesDialog(QDialog):
         self.tab_pdf = _TemplateTab(
             description=(
                 "<b>PDF report template.</b> JSON controlling the title, subtitle, "
-                "optional logo, which header fields appear and in what order, and "
-                "the results columns. <code>header_fields</code> and the column "
+                "logo, which header fields appear and in what order, and "
+                "the results columns. <code>logo_path</code>: empty = the J&amp;J "
+                "MedTech logo, <code>none</code> = no logo, or an image file. <code>header_fields</code> and the column "
                 "lists are <code>[label, field]</code> pairs: the label is free "
                 "text, the field must be a known name.<br>"
                 "The PDF results table always uses <code>detail_columns</code>, so "

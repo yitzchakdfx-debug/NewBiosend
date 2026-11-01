@@ -715,6 +715,18 @@ class MainWindow(QMainWindow):
 
         ribbon.addStretch()
 
+        # The customer's logo, ahead of ours.
+        self.lbl_customer_logo = QLabel()
+        self.lbl_customer_logo.setObjectName("customer_logo")
+        customer_logo = self._ICONS_DIR / "JJMedTechLogo.svg"
+        if customer_logo.is_file():
+            self.lbl_customer_logo.setPixmap(
+                QIcon(str(customer_logo)).pixmap(QSize(220, 44))
+            )
+        self.lbl_customer_logo.setToolTip("Johnson & Johnson MedTech")
+        ribbon.addWidget(self.lbl_customer_logo, 0, Qt.AlignmentFlag.AlignVCenter)
+        ribbon.addSpacing(16)
+
         self.lbl_brand_icon = QLabel()
         self.lbl_brand_icon.setObjectName("brand_icon")
         self.lbl_brand_icon.setFixedSize(220, 64)

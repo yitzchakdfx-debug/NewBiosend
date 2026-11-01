@@ -614,6 +614,29 @@ def _write_csv(
 
 
 
+#: The customer's logo (J&J MedTech), bundled with the program.
+CUSTOMER_LOGO = ("ui", "assets", "icons", "JJMedTechLogo.png")
+
+
+def _report_logo(logo_path: str) -> Path | None:
+    """The image for the top of the PDF.
+
+    Empty (the default) = the customer's logo; "none" = no logo; anything else
+    is a file, relative to the templates folder unless absolute.
+    """
+    if logo_path.lower() == "none":
+        return None
+    if not logo_path:
+        from paths import resource_path
+
+        candidate = resource_path(*CUSTOMER_LOGO)
+    else:
+        candidate = Path(logo_path)
+        if not candidate.is_absolute():
+            candidate = template_dir() / candidate
+    return candidate if candidate.is_file() else None
+
+
 def write_pdf_report(
     path: Path,
     run_meta: dict[str, Any],
@@ -634,20 +657,21 @@ def write_pdf_report(
     styles = getSampleStyleSheet()
     flow: list[Any] = []
 
-    logo_path = str(template.get("logo_path", "")).strip()
-    if logo_path:
-        candidate = Path(logo_path)
-        if not candidate.is_absolute():
-            candidate = template_dir() / candidate
-        if candidate.is_file():
-            try:
-                # lazy=0: decode the image now, so an unreadable logo is caught
-                # here. reportlab otherwise defers it to doc.build(), where it
-                # failed every report built from the template.
-                flow.append(Image(str(candidate), width=2.2 * inch, height=0.55 * inch, lazy=0))
-                flow.append(Spacer(1, 0.1 * inch))
-            except Exception:
-                pass  # an unreadable logo must not cost the run its report
+    candidate = _report_logo(str(template.get("logo_path", "")).strip())
+    if candidate is not None:
+        try:
+            # lazy=0: decode the image now, so an unreadable logo is caught
+            # here. reportlab otherwise defers it to doc.build(), where it
+            # failed every report built from the template.
+            logo = Image(str(candidate), lazy=0)
+            # Keep the logo's own proportions within a 2.2 x 0.55 inch box.
+            scale = min(2.2 * inch / logo.imageWidth, 0.55 * inch / logo.imageHeight)
+            logo.drawWidth, logo.drawHeight = logo.imageWidth * scale, logo.imageHeight * scale
+            logo.hAlign = "LEFT"
+            flow.append(logo)
+            flow.append(Spacer(1, 0.1 * inch))
+        except Exception:
+            pass  # an unreadable logo must not cost the run its report
 
     flow.append(
         Paragraph(f"<b>{escape(str(template.get('title', '')))}</b>", styles["Heading1"])

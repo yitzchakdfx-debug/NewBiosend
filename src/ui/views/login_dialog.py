@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QDialog,
     QLabel,
@@ -54,6 +55,16 @@ class LoginDialog(QDialog):
         outer_layout.addWidget(card, 0, Qt.AlignmentFlag.AlignHCenter)
 
         outer_layout.addStretch(1)
+
+        # The customer's logo above the title.
+        logo_file = resource_path("ui", "assets", "icons", "JJMedTechLogo.svg")
+        if logo_file.is_file():
+            logo = QLabel()
+            logo.setObjectName("login_customer_logo")
+            logo.setPixmap(QIcon(str(logo_file)).pixmap(QSize(240, 48)))
+            logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            card_layout.addWidget(logo)
+            card_layout.addSpacing(8)
 
         # Title
         title = QLabel("DFX ATE Login")

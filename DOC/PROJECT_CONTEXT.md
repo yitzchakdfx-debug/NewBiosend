@@ -909,6 +909,14 @@ only one — so no new connection is opened:
 
 ---
 
+## Customer logo
+
+The J&J MedTech logo (supplied by the customer, 2026-11-01) is shown in the
+main window's top bar before the DFX logo, on the login screen, and at the top
+of every PDF report. PDF: template `logo_path` empty = this logo
+(`report_generator.CUSTOMER_LOGO`, a PNG rendered from the SVG), `none` = no
+logo, anything else = an image file.
+
 ## XML transfer to MES (customer POD "XML Transfer Service")
 
 The customer's POD (draft) defines how XML reports reach CAMSTAR and what happens
