@@ -6,7 +6,6 @@ import csv
 import io
 import math
 import re
-import shutil
 from datetime import datetime
 from html import escape
 from pathlib import Path
@@ -74,6 +73,8 @@ class ReportGenerator:
         #: Set when a report could not be written to the chosen folder (e.g. a
         #: network share that is down) and was saved locally instead.
         self.fallback_notes: list[str] = []
+        #: The XML's copy in the transfer service's Pending folder, once queued.
+        self.pending_xml: Path | None = None
 
     def _write_archived(self, run_meta: dict[str, Any], name: Callable[[str], str],
                         write: Callable[[Path], None]) -> Path:
@@ -159,39 +160,26 @@ class ReportGenerator:
         results: list[dict[str, Any]],
         role: str,
     ) -> Path:
-        """Write XML report alongside the PDF in the same archive folder."""
+        """Write the XML next to the PDF, then queue a copy for the MES transfer.
+
+        The copy goes to the local Pending folder; the XML transfer service
+        (`xml_service.py`) sends it to the MES folder and verifies it. Pending
+        is on this PC, so a network outage cannot lose the report. The queued
+        path is kept in `self.pending_xml` for the end-of-run check.
+        """
         _reject_if_reports_forbidden(role.strip().title())
         xml_path = self._write_archived(
             run_meta,
             lambda stem: f"{stem}.xml",
             lambda path: write_xml_report(path, run_meta, results),
         )
-        self._copy_to_xml_folder(xml_path)
-        return xml_path
+        from logic import xml_transfer
 
-    def xml_folder(self) -> Path:
-        """Where every XML report is also collected (see `logic.report_paths.xml_dir`)."""
-        return report_paths.xml_dir(self._base)
-
-    def _copy_to_xml_folder(self, xml_path: Path) -> Path:
-        """Copy a written XML report into the shared XML folder, never overwriting.
-
-        The unit-folder copy already exists when this runs, so a failure here
-        (e.g. a network share that is down) loses nothing; it raises
-        `XmlCopyError` naming where the report is so it can be copied by hand.
-        """
-        folder = self.xml_folder()
         try:
-            folder.mkdir(parents=True, exist_ok=True)
-            target = folder / xml_path.name
-            n = 2
-            while target.exists():
-                target = folder / f"{xml_path.stem}_{n}{xml_path.suffix}"
-                n += 1
-            shutil.copy2(xml_path, target)
-            return target
+            self.pending_xml = xml_transfer.enqueue(xml_path)
         except OSError as exc:
-            raise XmlCopyError(xml_path, folder, exc) from exc
+            raise XmlQueueError(xml_path, xml_transfer.pending_dir(), exc) from exc
+        return xml_path
 
     def generate_csv_file(
         self,
@@ -799,11 +787,11 @@ def write_pdf_report(
     buffer.close()
 
 
-class XmlCopyError(OSError):
-    """The XML report was written to the unit folder but not copied to the XML folder."""
+class XmlQueueError(OSError):
+    """The XML report was written to the unit folder but not queued in Pending."""
 
     def __init__(self, xml_path: Path, folder: Path, cause: Exception) -> None:
-        super().__init__(f"{xml_path} could not be copied to {folder}: {cause}")
+        super().__init__(f"{xml_path} could not be queued in {folder}: {cause}")
         self.xml_path, self.folder, self.cause = xml_path, folder, cause
 
 

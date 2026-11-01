@@ -22,6 +22,7 @@ contradicts the source, the source is wrong - fix the source, not the doc.
 | Persistence + RBAC   | `DatabaseManager` (`logic/database_manager.py`) | logic |
 | Encrypted logging    | `SecureLogger` (`logic/secure_logger.py`)   | logic    |
 | Reporting            | `ReportGenerator` (`logic/report_generator.py`) | logic |
+| XML transfer to MES  | `xml_service.py` (own process) + `logic/xml_transfer.py`; GUI side `ui/views/mes_dialogs.py`, `xml_transfer_dialog.py` | service / logic / ui |
 | Hardware abstraction | `BaseDriver` / `MockHardware` (`drivers/`)  | drivers  |
 | Composition root     | `MainWindow` (`ui/views/main_window.py`)    | ui       |
 | Config loader        | `env.py` → `config.py` / `version.py`      | top-level |

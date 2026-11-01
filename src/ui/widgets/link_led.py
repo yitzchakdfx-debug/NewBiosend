@@ -27,6 +27,14 @@ _TEXT = {
     "sim": "Simulator",
 }
 
+#: The MES-folder indicator next to it reuses the same states and colours.
+MES_TEXT = {
+    "ok": "MES: Available",
+    "down": "MES: Unavailable",
+    "reconnecting": "MES: transfer service stopped",
+    "unknown": "MES: checking...",
+}
+
 
 def host_from_visa(resource: str) -> str:
     """IP/host of a `TCPIP0::192.168.16.123::4001::SOCKET` resource, else ""."""
@@ -43,8 +51,9 @@ def port_from_visa(resource: str) -> int | None:
 class LinkLed(QWidget):
     """A coloured dot and a short label: ok / reconnecting / down / unknown / sim."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, texts: dict[str, str] | None = None) -> None:
         super().__init__(parent)
+        self._texts = texts or _TEXT
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
@@ -61,9 +70,9 @@ class LinkLed(QWidget):
         return self._state
 
     def set_state(self, state: str, detail: str = "") -> None:
-        state = state if state in _TEXT else "unknown"
+        state = state if state in self._texts else "unknown"
         self._state = state
-        self._text.setText(_TEXT[state])
+        self._text.setText(self._texts[state])
         tip = f"{detail}\n" if detail else ""
         self.setToolTip(f"{tip}Last update: {datetime.now():%H:%M:%S}")
         for widget in (self._dot, self._text):

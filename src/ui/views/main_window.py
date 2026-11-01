@@ -71,7 +71,9 @@ from ui.views.test_result_dialog import TestResultDialog
 from ui.views.user_management_dialog import UserManagementDialog
 from ui.views.version_manager_dialog import VersionManagerDialog
 from ui.widgets.control_panel import ControlPanelWidget, UnitProgressRow
-from ui.widgets.link_led import LinkLed, PingProbe, host_from_visa, port_from_visa
+from ui.widgets.link_led import MES_TEXT, LinkLed, PingProbe, host_from_visa, port_from_visa
+from logic import xml_transfer
+from ui.views.mes_dialogs import MesAccessProbe, MesWarningDialog
 from logic import report_paths
 from ui.widgets.result_row_delegate import ResultRowDelegate
 from ui.widgets.wrap_item_delegate import WrapItemDelegate
@@ -165,6 +167,15 @@ class MainWindow(QMainWindow):
         # Set once the window has agreed to close. After that no result dialog
         # may open: see closeEvent for why one would leave the app running.
         self._closing = False
+        #: XML reports of the run in progress, for the one end-of-run MES check
+        #: (customer POD: a single warning, not one per unit). Workers map to
+        #: their run's batch because a batch can still be checking when the next
+        #: run starts.
+        self._xml_batch: dict | None = None
+        self._worker_batch: dict[ReportWorker, dict] = {}
+        #: False until the startup MES-folder check passed or was authorized.
+        self._mes_gate_ok = False
+        self._last_service_start = 0.0
         # Pin the station's hardware config now, while the window is opening and
         # before the admin can reach the Connections dialog. The factory caches on
         # first read, so without this the first read could happen *after* a
@@ -193,6 +204,7 @@ class MainWindow(QMainWindow):
         self._fit_initial_size_to_screen()
         if not started_on_latest:
             QTimer.singleShot(0, self.load_script)
+        QTimer.singleShot(0, self._startup_mes_check)
 
     def _make_ribbon_button(self, object_name: str, text: str) -> QToolButton:
         btn = QToolButton()
@@ -258,6 +270,9 @@ class MainWindow(QMainWindow):
         self._act_export_pdf = results_menu.addAction(
             "Export to &PDF...", self.export_results_pdf
         )
+        if self._can(Capability.VIEW_XML_TRANSFERS):
+            results_menu.addSeparator()
+            results_menu.addAction("XML &Transfer...", self.open_xml_transfer_dialog)
 
         if self._can(Capability.MANAGE_USERS) or self._can(Capability.VIEW_AUDIT_LOG):
             users_menu = menu.addMenu("&Users")
@@ -688,6 +703,16 @@ class MainWindow(QMainWindow):
         self._link_timer.start()
         QTimer.singleShot(0, self._probe_link)
 
+        # MES-folder indicator, fed by the XML transfer service's status file.
+        self.mes_led = LinkLed(self, MES_TEXT)
+        self.mes_led.setObjectName("mes_led")
+        ribbon.addSpacing(16)
+        ribbon.addWidget(self.mes_led, 0, Qt.AlignmentFlag.AlignVCenter)
+        self._mes_timer = QTimer(self)
+        self._mes_timer.setInterval(3000)
+        self._mes_timer.timeout.connect(self._refresh_mes_led)
+        self._mes_timer.start()
+
         ribbon.addStretch()
 
         self.lbl_brand_icon = QLabel()
@@ -1108,8 +1133,15 @@ class MainWindow(QMainWindow):
         # The PDF archived but the CAMSTAR XML did not. Surfaced separately and
         # prominently: the run looks complete, yet MES has nothing to ingest.
         worker.xml_failed.connect(self._on_xml_report_failed)
-        worker.xml_copy_failed.connect(self._on_xml_copy_failed)
+        # Collected per run and reported once at the end (customer POD), not as
+        # one dialog per unit. Bound methods: queued to the GUI thread.
+        batch = self._current_xml_batch()
+        batch["workers"] += 1
+        self._worker_batch[worker] = batch
+        worker.xml_queued.connect(self._on_xml_queued)
+        worker.xml_queue_failed.connect(self._on_xml_queue_failed)
         worker.saved_locally.connect(self._on_report_saved_locally)
+        worker.finished.connect(self._on_report_worker_done)
         # A bound method, not a lambda: it is queued to the GUI thread reliably.
         # The lambda this replaces could miss, leaving a deleted worker in the
         # list — closing the app then crashed in _shutdown_threads.
@@ -1361,6 +1393,13 @@ class MainWindow(QMainWindow):
         # disabled during a run; this guard covers the menu entry too.
         if self._run_active():
             QMessageBox.information(self, "Busy", "A test is already running.")
+            return
+        if not self._mes_gate_ok:
+            # Customer POD: an unreachable MES folder is reported, and cleared
+            # by an Admin/Maintenance user, before testing begins.
+            QMessageBox.information(
+                self, "Please wait", "The MES folder check has not finished yet."
+            )
             return
 
         # Checked before the dialog, not after it: the dialog can now record an
@@ -2135,23 +2174,27 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if confirm == QMessageBox.StandardButton.Yes:
-            try:
-                DatabaseManager().log_audit_action(
-                    "User Logged Out",
-                    username=str(self._user_info.get("username", "")),
-                    employee_id=str(self._user_info.get("employee_id", "")),
-                    details="",
-                )
-            except Exception:
-                pass
-            self._cleanup_operator_temp()
-            self._shutdown_threads()
-            self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-            self.setProperty("logout_requested", True)
-            app = QApplication.instance()
-            if app is not None:
-                app.setProperty("logout_requested", True)
-            self.close()
+            self._logout_now()
+
+    def _logout_now(self) -> None:
+        """Log out without asking (also the MES warning's "Log out" choice)."""
+        try:
+            DatabaseManager().log_audit_action(
+                "User Logged Out",
+                username=str(self._user_info.get("username", "")),
+                employee_id=str(self._user_info.get("employee_id", "")),
+                details="",
+            )
+        except Exception:
+            pass
+        self._cleanup_operator_temp()
+        self._shutdown_threads()
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self.setProperty("logout_requested", True)
+        app = QApplication.instance()
+        if app is not None:
+            app.setProperty("logout_requested", True)
+        self.close()
 
     def closeEvent(self, event) -> None:
         if self._is_running(self.test_thread) or any(
@@ -2428,20 +2471,179 @@ class MainWindow(QMainWindow):
         entry_type = "cmd" if msg.startswith("Executing:") else "info"
         self._record_trace(entry_type, stamped)
 
-    def _on_report_saved_locally(self, note: str) -> None:
-        """The chosen reports folder (e.g. a share) was unreachable; nothing was lost."""
-        self._record_trace("error", note)
-        QMessageBox.warning(self, "Report saved locally", note)
+    def _sender_batch(self) -> dict | None:
+        return self._worker_batch.get(self.sender())
 
-    def _on_xml_copy_failed(self, error: str) -> None:
-        """The XML exists in the unit folder; only the shared-folder copy failed."""
-        self._record_trace("error", f"XML report not copied to the XML folder: {error}")
-        QMessageBox.warning(
-            self,
-            "XML not copied",
-            "The XML report was saved in the unit's folder, but could not be "
-            f"copied to the XML folder:\n\n{error}\n\nCopy it there manually.",
+    def _on_report_saved_locally(self, note: str) -> None:
+        """The chosen reports folder (e.g. a share) was unreachable; nothing was lost.
+
+        Shown once at the end of the run, with the other units' notes.
+        """
+        self._record_trace("error", note)
+        batch = self._sender_batch()
+        if batch is not None and note not in batch["notes"]:
+            batch["notes"].append(note)
+
+    def _on_xml_queued(self, name: str) -> None:
+        self.append_trace(f"XML queued for MES transfer: {name}")
+        batch = self._sender_batch()
+        if batch is not None:
+            batch["files"].append(name)
+
+    def _on_xml_queue_failed(self, error: str) -> None:
+        """The XML is in the unit folder but could not be put in Pending (local disk)."""
+        self._record_trace("error", f"XML report not queued for MES transfer: {error}")
+        batch = self._sender_batch()
+        if batch is not None:
+            batch["errors"].append(error)
+
+    def _on_report_worker_done(self) -> None:
+        batch = self._worker_batch.pop(self.sender(), None)
+        if batch is not None:
+            batch["workers"] -= 1
+            self._maybe_check_xml_batch(batch)
+
+    # ------------------------------------------------------------ MES / XML
+    def _current_xml_batch(self) -> dict:
+        if self._xml_batch is None:
+            self._xml_batch = {
+                "workers": 0, "files": [], "errors": [], "notes": [],
+                "ended": False, "checking": False,
+            }
+        return self._xml_batch
+
+    def _end_xml_batch(self) -> None:
+        """The run is over: once its reports are written, check their transfer."""
+        batch, self._xml_batch = self._xml_batch, None
+        if batch is not None:
+            batch["ended"] = True
+            self._maybe_check_xml_batch(batch)
+
+    def _maybe_check_xml_batch(self, batch: dict) -> None:
+        """Ask the service for a cycle now, then report the run's result once."""
+        if not batch["ended"] or batch["workers"] > 0 or batch["checking"]:
+            return
+        batch["checking"] = True
+        if not (batch["files"] or batch["errors"] or batch["notes"]):
+            return
+        if not batch["files"]:
+            self._report_xml_batch(batch)
+            return
+        self._ensure_xml_service()
+        batch["kick"] = xml_transfer.request_cycle()
+        batch["deadline"] = batch["kick"] + 30.0
+        timer = QTimer(self)
+        timer.setInterval(500)
+
+        def poll() -> None:
+            status = xml_transfer.read_status()
+            now = datetime.now().timestamp()
+            cycle_done = float(status.get("cycle_end_epoch", 0) or 0) > batch["kick"]
+            no_service = not xml_transfer.service_running(status) and now > batch["kick"] + 5
+            if cycle_done or no_service or now > batch["deadline"]:
+                timer.stop()
+                timer.deleteLater()
+                self._report_xml_batch(batch)
+
+        timer.timeout.connect(poll)
+        timer.start()
+
+    def _report_xml_batch(self, batch: dict) -> None:
+        not_sent = [
+            name for name in batch["files"]
+            if xml_transfer.file_status(name) != xml_transfer.STATUS_TRANSFERRED
+        ]
+        if batch["files"] and not not_sent:
+            self.append_trace(f"{len(batch['files'])} XML report(s) transferred to MES.")
+        if self._closing:
+            return
+        if batch["notes"]:
+            QMessageBox.warning(self, "Report saved locally", "\n\n".join(batch["notes"]))
+        if batch["errors"]:
+            QMessageBox.warning(
+                self,
+                "XML not queued",
+                "The XML report was saved in the unit's folder but could not be "
+                "queued for the MES transfer:\n\n" + "\n\n".join(batch["errors"]),
+            )
+        if not_sent:
+            self._record_trace(
+                "error",
+                f"{len(not_sent)} XML report(s) not transferred to MES yet: {', '.join(not_sent)}",
+            )
+            MesWarningDialog(
+                xml_transfer.MES_UNAVAILABLE_TEXT,
+                title="MES connection unavailable",
+                user_info=self._user_info,
+                action="MES warning dismissed - XML reports not transferred",
+                detail=(
+                    f"{len(not_sent)} XML report(s) are waiting in {xml_transfer.pending_dir()}. "
+                    "The transfer service retries every 60 seconds."
+                ),
+                parent=self,
+            ).exec()
+
+    def _ensure_xml_service(self) -> None:
+        """Start the transfer service if it is not running (backup to Task Scheduler)."""
+        now = datetime.now().timestamp()
+        if now - self._last_service_start < 30:
+            return
+        if xml_transfer.start_service():
+            self._last_service_start = now
+            self.append_trace("XML transfer service was not running - started it.")
+
+    def _refresh_mes_led(self) -> None:
+        status = xml_transfer.read_status()
+        if not xml_transfer.service_running(status):
+            self.mes_led.set_state("reconnecting", "The XML transfer service is not running.")
+            self._ensure_xml_service()
+            return
+        mes = status.get("mes")
+        if mes == "Available":
+            self.mes_led.set_state("ok", str(status.get("mes_folder", "")))
+        elif mes == "Unavailable":
+            self.mes_led.set_state("down", str(status.get("mes_reason", "")))
+        else:
+            self.mes_led.set_state("unknown")
+
+    def _startup_mes_check(self) -> None:
+        """Customer POD: at startup, write/read/delete a test file in the MES folder."""
+        self._ensure_xml_service()
+        self._mes_probe = MesAccessProbe(self)
+        self._mes_probe.result.connect(self._on_startup_mes_result)
+        self._mes_probe.start()
+
+    def _on_startup_mes_result(self, available: bool, reason: str) -> None:
+        if not xml_transfer.service_running():
+            self.mes_led.set_state("ok" if available else "down", reason)
+        if available:
+            self._mes_gate_ok = True
+            self.append_trace("MES folder check: Available.")
+            return
+        self._record_trace("error", f"MES folder check: Unavailable - {reason}")
+        if self._closing:
+            return
+        dialog = MesWarningDialog(
+            "MES connection unavailable. XML reports will be saved locally and "
+            "transferred automatically after communication is restored.\n\n"
+            "Only an Administrator or Maintenance user can authorize testing to continue.",
+            title="MES connection unavailable",
+            user_info=self._user_info,
+            action="MES unavailable at startup - operation continued",
+            allow_logout=True,
+            detail=reason,
+            parent=self,
         )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._mes_gate_ok = True
+            self.append_trace(f"MES unavailable - testing authorized by {dialog.cleared_by}.")
+        else:
+            self._logout_now()
+
+    def open_xml_transfer_dialog(self) -> None:
+        from ui.views.xml_transfer_dialog import XmlTransferDialog
+
+        XmlTransferDialog(self).exec()
 
     def _on_xml_report_failed(self, error: str) -> None:
         """Report a CAMSTAR XML export failure without hiding it in the trace.
@@ -2652,6 +2854,7 @@ class MainWindow(QMainWindow):
             self.control_panel.edit_part_number.setReadOnly(True)
         self._unlock_pre_test_fields()
         self.append_trace("All parallel sequences complete.")
+        self._end_xml_batch()
         if lost:
             self._show_link_lost_message(
                 lost, some_completed=len(lost) + len(stopped) < total_units
@@ -2711,6 +2914,7 @@ class MainWindow(QMainWindow):
             self.control_panel.edit_part_number.setReadOnly(True)
         self._unlock_pre_test_fields()
         self.test_thread = None
+        self._end_xml_batch()
 
         if self._closing:
             return  # no dialogs once the window is closing — see closeEvent

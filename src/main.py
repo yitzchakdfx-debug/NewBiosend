@@ -75,6 +75,13 @@ def _run(app: QApplication) -> int:
         from logic.catalog_seed import seed_catalog_if_empty
 
         seed_catalog_if_empty()  # fresh install: the product test is ready to run
+        from logic import xml_transfer
+
+        # The XML transfer service runs on its own (Task Scheduler at logon);
+        # this is the backup that starts it if it is not running, before the
+        # login screen, so pending reports move even while no one is logged in.
+        xml_transfer.ensure_dirs()
+        xml_transfer.start_service()
     except Exception as exc:
         QMessageBox.critical(
             None,

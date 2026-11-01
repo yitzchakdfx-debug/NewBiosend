@@ -154,10 +154,45 @@ exe = EXE(
     icon=str(SRC / "ui" / "assets" / "icons" / "DFXAppIcon.png"),
 )
 
+# The XML transfer service (customer POD): a second, windowless program in the
+# same folder, sharing `_internal`. It must run without the GUI (and keeps
+# running when the GUI is closed), so it is its own EXE rather than a thread.
+# No Qt: it only copies files, so its analysis excludes PySide6 entirely.
+svc = Analysis(
+    [str(SRC / "xml_service.py")],
+    pathex=[str(SRC)],
+    binaries=[],
+    datas=[],
+    hiddenimports=["dotenv"],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=excludes + ["PySide6", "shiboken6", "reportlab", "PIL", "pyvisa", "pyvisa_py", "serial", "usb"],
+    noarchive=False,
+)
+svc_pyz = PYZ(svc.pure)
+svc_exe = EXE(
+    svc_pyz,
+    svc.scripts,
+    [],
+    exclude_binaries=True,
+    name="DFX_XmlTransfer",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=False,
+    disable_windowed_traceback=False,
+    icon=str(SRC / "ui" / "assets" / "icons" / "DFXAppIcon.png"),
+)
+
 coll = COLLECT(
     exe,
+    svc_exe,
     a.binaries,
     a.datas,
+    svc.binaries,
+    svc.datas,
     strip=False,
     upx=False,
     name="DFX_Tester",

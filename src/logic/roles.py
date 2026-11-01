@@ -77,6 +77,10 @@ class Capability(str, Enum):
     EDIT_CONNECTIONS = "edit_connections"         # change instrument connections
     VIEW_MEASURED_DETAIL = "view_measured_detail" # see Min/Max/Value columns
     VIEW_TRACE_LOG = "view_trace_log"             # see the live trace pane
+    # Customer POD (XML transfer): only Admin/Maintenance may let testing go on
+    # while the MES folder is unreachable, or dismiss the "not transferred" warning.
+    AUTHORIZE_MES_OFFLINE = "authorize_mes_offline"
+    VIEW_XML_TRANSFERS = "view_xml_transfers"     # XML transfer status and log (read-only)
 
 
 _OPERATOR: frozenset[Capability] = frozenset(
@@ -84,6 +88,7 @@ _OPERATOR: frozenset[Capability] = frozenset(
         Capability.RUN_SEQUENCE,
         Capability.GENERATE_REPORTS,
         Capability.ARCHIVE_RUN,
+        Capability.VIEW_XML_TRANSFERS,
     }
 )
 
@@ -99,6 +104,8 @@ _MAINTENANCE: frozenset[Capability] = frozenset(
         Capability.SELECT_STEPS,
         Capability.VIEW_MEASURED_DETAIL,
         Capability.VIEW_TRACE_LOG,
+        Capability.AUTHORIZE_MES_OFFLINE,
+        Capability.VIEW_XML_TRANSFERS,
     }
 )
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QThread, Signal
 
-from logic.report_generator import ReportGenerator, XmlCopyError
+from logic.report_generator import ReportGenerator, XmlQueueError
 
 
 class ReportWorker(QThread):
@@ -13,9 +13,11 @@ class ReportWorker(QThread):
     #: from `failed` so the operator is told the CAMSTAR file is missing
     #: without being led to think the run lost its PDF record too.
     xml_failed = Signal(str)
-    #: The XML was written to the unit folder but not copied to the shared XML
-    #: folder. Separate from `xml_failed`: here the CAMSTAR file does exist.
-    xml_copy_failed = Signal(str)
+    #: The XML was written to the unit folder but could not be queued for the
+    #: MES transfer. Separate from `xml_failed`: here the CAMSTAR file exists.
+    xml_queue_failed = Signal(str)
+    #: The XML was queued for the MES transfer: its Pending file name.
+    xml_queued = Signal(str)
     #: The chosen reports folder was unreachable; the report was saved locally.
     saved_locally = Signal(str)
 
@@ -40,8 +42,10 @@ class ReportWorker(QThread):
             pdf_error = exc
         try:
             gen.generate_xml_auto_archive(self._meta, self._rows, self._role)
-        except XmlCopyError as exc:
-            self.xml_copy_failed.emit(str(exc))
+            if gen.pending_xml is not None:
+                self.xml_queued.emit(gen.pending_xml.name)
+        except XmlQueueError as exc:
+            self.xml_queue_failed.emit(str(exc))
         except Exception as exc:
             # Not silent: without the CAMSTAR file the run cannot be ingested
             # by MES, and swallowing this made a missing export look fine.

@@ -34,13 +34,16 @@ def results_dir() -> Path:
     return Path(stored) if stored else local_results_dir()
 
 
-def xml_dir(results: Path | None = None) -> Path:
-    """Folder collecting a copy of every XML: Admin setting, `XML_EXPORT_DIR`, `<results>/XML`."""
+def mes_dir() -> Path | None:
+    """The customer's MES (CAMSTAR) folder: Admin setting, else `XML_EXPORT_DIR`, else None.
+
+    There is no local default: with no folder set the XML transfer service
+    reports MES as unavailable and keeps the reports in Pending.
+    """
     stored = _stored().get(XML_DIR_KEY, "").strip()
     if stored:
         return Path(stored)
     from config import XML_EXPORT_DIR
 
-    if XML_EXPORT_DIR.strip():
-        return Path(XML_EXPORT_DIR.strip())
-    return (results if results is not None else results_dir()) / "XML"
+    return Path(XML_EXPORT_DIR.strip()) if XML_EXPORT_DIR.strip() else None
+

@@ -93,6 +93,8 @@ src/
     database.db        # SQLite
     logs/              # encrypted sys_YYYYMMDD.dat files
     results/           # archived PDFs under <UUT>/<Serial>_<dd-mm-yyyy>_<HHhMMmSSs>/
+                       #   XML/Pending, XML/Transferred: MES transfer queue (see below)
+    xml_transfer/      # service status.json, kick, transfer_log.db, service.log
                        #   files named YYYYMMDD_HHMM_<SN>.pdf / .xml (customer POD)
                        #   one folder per test, named by serial and test start,
                        #   day first, e.g. 2456_19-10-2026_13h06m53s (2026-10-28)
@@ -906,6 +908,46 @@ only one — so no new connection is opened:
   what each load actually drew.
 
 ---
+
+## XML transfer to MES (customer POD "XML Transfer Service")
+
+The customer's POD (draft) defines how XML reports reach CAMSTAR and what happens
+when the MES network folder is down. J&J asked for the service to run **outside
+the GUI**, with the GUI monitoring it.
+
+- **Two programs.** `DFX_Tester.exe` (GUI) and `DFX_XmlTransfer.exe`
+  (`src/xml_service.py`, windowless). The service is started at logon by Task
+  Scheduler (`install/install_xml_service_task.cmd`); the GUI also starts it
+  (`xml_transfer.start_service`) before login and whenever it sees it stopped.
+  One copy only (mutex `Local\DFX_xml_transfer`).
+- **Folders.** A finished report's XML is written to the unit folder as before
+  and a copy is queued in `data/results/XML/Pending` (always local). The service
+  copies each pending file to the MES folder (Connections > "MES folder (XML
+  transfer)", key `__xml_dir__`, fallback `XML_EXPORT_DIR`; blank = not set =
+  Unavailable), reads the copy back and compares SHA-256, and only then moves
+  the local file to `data/results/XML/Transferred`. A same-name file already in
+  MES with identical content counts as sent; a different one is never
+  overwritten (Failed).
+- **Cycle.** Every 60 s, and at once when the GUI writes `data/xml_transfer/kick`
+  (end of every run). One loop, so cycles never overlap. Each cycle first checks
+  access by writing, reading and deleting a dummy file (a ping is not enough).
+- **Log.** `data/xml_transfer/transfer_log.db`, append-only (file, time,
+  Successful/Failed, detail). "Current status" in the GUI is taken from the
+  folder the file is in now, so an old Failed row reads Transferred once sent.
+- **Service <-> GUI.** The service writes `data/xml_transfer/status.json`
+  (Running/Stopped, heartbeat, MES Available/Unavailable, last/next cycle,
+  counts); the GUI reads it for the "MES" LED and Results > XML Transfer...
+  Errors go to `data/xml_transfer/service.log`.
+- **GUI rules.** After login the GUI runs the access check itself; if MES is
+  unavailable a warning appears before testing, and only an Admin or Maintenance
+  user may continue (`Capability.AUTHORIZE_MES_OFFLINE`; an Operator gets
+  "Authorize..." for an Admin/Maintenance name and password, or "Log out"). Start
+  is refused until the check is done or cleared. At the end of a run the GUI asks
+  for a cycle, waits for it (max 30 s, non-blocking) and, if any XML of that run
+  is still pending, shows **one** warning with the customer's exact text
+  (`xml_transfer.MES_UNAVAILABLE_TEXT`) that only Admin/Maintenance can dismiss.
+  Each authorization is audited. Test results and running sequences are never
+  affected by MES.
 
 ## .env keys
 

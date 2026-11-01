@@ -143,14 +143,22 @@ class ConnectionsDialog(QDialog):
         self._edit_results.setPlaceholderText(f"blank = {report_paths.local_results_dir()}")
         self._edit_xml = QLineEdit(self._initial_xml)
         self._edit_xml.setObjectName("conn_xml_dir")
-        self._edit_xml.setPlaceholderText("blank = <reports folder>\\XML  (or XML_EXPORT_DIR in .env)")
+        self._edit_xml.setPlaceholderText(
+            "the CAMSTAR folder, e.g. \\\\server\\camstar\\in  (blank = XML_EXPORT_DIR in .env)"
+        )
+        self._edit_xml.setToolTip(
+            "The XML transfer service sends every XML report here, checks the copy,\n"
+            "then moves the local file from Pending to Transferred. Retried every 60 s."
+        )
         reports_form.addRow("Reports folder", self._folder_row(self._edit_results))
-        reports_form.addRow("XML folder (copy of every XML)", self._folder_row(self._edit_xml))
+        reports_form.addRow("MES folder (XML transfer)", self._folder_row(self._edit_xml))
         root.addLayout(reports_form)
         reports_note = QLabel(
             "Takes effect on the next report. For a shared network folder prefer a "
             "path like \\\\server\\share\\reports. If it is unreachable when a "
-            "report is written, the report is saved locally and you are told."
+            "report is written, the report is saved locally and you are told. "
+            "XML reports wait in the local Pending folder until the MES folder "
+            "accepts them."
         )
         reports_note.setWordWrap(True)
         root.addWidget(reports_note)
@@ -278,7 +286,7 @@ class ConnectionsDialog(QDialog):
         load_value = self._edit_load.text().strip()
         _write(LOAD_RESOURCE_KEY, load_value, "load address", self._initial_load)
         _write(RESULTS_DIR_KEY, results_value, f"reports folder={results_value or 'default'}", self._initial_results)
-        _write(XML_DIR_KEY, xml_value, f"XML folder={xml_value or 'default'}", self._initial_xml)
+        _write(XML_DIR_KEY, xml_value, f"MES folder={xml_value or 'not set'}", self._initial_xml)
         for slot, edit in self._serial_edits.items():
             serial = edit.text().strip()
             _write(
