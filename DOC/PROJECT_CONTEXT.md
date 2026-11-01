@@ -927,7 +927,7 @@ the GUI**, with the GUI monitoring it.
   (`src/xml_service.py`, windowless). The service is started at logon by Task
   Scheduler (`install/install_xml_service_task.cmd`); the GUI also starts it
   (`xml_transfer.start_service`) before login and whenever it sees it stopped.
-  One copy only (mutex `Local\DFX_xml_transfer`).
+  One copy per installation folder (mutex `Local\DFX_xml_transfer_<hash of the data folder>`).
 - **Folders.** A finished report's XML is written to the unit folder as before
   and a copy is queued in `data/results/XML/Pending` (always local). The service
   copies each pending file to the MES folder (Connections > "MES folder (XML
@@ -956,6 +956,14 @@ the GUI**, with the GUI monitoring it.
   (`xml_transfer.MES_UNAVAILABLE_TEXT`) that only Admin/Maintenance can dismiss.
   Each authorization is audited. Test results and running sequences are never
   affected by MES.
+- **The end-of-run warning waits for other dialogs.** The check usually finishes
+  while the PASS/FAIL dialog is open; the warning is shown once no modal dialog
+  is active (`QApplication.activeModalWidget()`), and an audit row "MES warning
+  shown" is written. Every step of the check goes to the trace and the encrypted
+  log, and errors in it are caught (2026-11-01: on a station the warning did not
+  appear and, with no console in the EXE, left no trace).
+- **Unhandled exceptions** in the GUI go to `data/logs/errors.log`
+  (`main._install_error_log`), since the windowed EXE has no console.
 
 ## .env keys
 

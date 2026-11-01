@@ -7,7 +7,7 @@ also starts it if it finds it is not running.
 
 One loop, one cycle at a time: a cycle every 60 seconds, or at once when the GUI
 asks (the `kick` file). Cycles therefore never overlap. Only one copy of the
-service runs (named mutex). The logic itself is in `logic.xml_transfer`.
+service runs per installation folder (named mutex). The logic itself is in `logic.xml_transfer`.
 """
 
 from __future__ import annotations
@@ -26,8 +26,20 @@ if str(_SRC) not in sys.path:
 from logic.file_lock import AlreadyRunningError, SingleInstanceLock  # noqa: E402
 from paths import user_data_path  # noqa: E402
 
-MUTEX_NAME = "Local\\DFX_xml_transfer"
 HEARTBEAT_SECONDS = 5
+
+
+def mutex_name() -> str:
+    """One service per installation folder, not per PC.
+
+    Keyed by the data folder, so two installs on one PC (e.g. a test copy next
+    to the production folder) each get their own service instead of the first
+    one silently blocking the other.
+    """
+    import hashlib
+
+    key = str(user_data_path()).lower().encode("utf-8")
+    return "Local\\DFX_xml_transfer_" + hashlib.sha1(key).hexdigest()[:12]
 
 
 def _log_line(message: str) -> None:
@@ -126,7 +138,7 @@ def serve() -> int:
 
 
 def main() -> int:
-    lock = SingleInstanceLock(user_data_path("xml_transfer", "service.lock"), MUTEX_NAME)
+    lock = SingleInstanceLock(user_data_path("xml_transfer", "service.lock"), mutex_name())
     try:
         lock.acquire()
     except AlreadyRunningError:

@@ -2544,21 +2544,29 @@ class MainWindow(QMainWindow):
         self._ensure_xml_service()
         batch["kick"] = xml_transfer.request_cycle()
         batch["deadline"] = batch["kick"] + 30.0
-        timer = QTimer(self)
+        self._log_xml_check(f"end-of-run check: {len(batch['files'])} XML queued, cycle requested")
+        batch["timer"] = timer = QTimer(self)
         timer.setInterval(500)
+        timer.timeout.connect(lambda b=batch: self._poll_xml_batch(b))
+        timer.start()
 
-        def poll() -> None:
+    def _poll_xml_batch(self, batch: dict) -> None:
+        """Wait (without blocking) for the service's cycle, then report once."""
+        try:
             status = xml_transfer.read_status()
             now = datetime.now().timestamp()
             cycle_done = float(status.get("cycle_end_epoch", 0) or 0) > batch["kick"]
             no_service = not xml_transfer.service_running(status) and now > batch["kick"] + 5
-            if cycle_done or no_service or now > batch["deadline"]:
-                timer.stop()
-                timer.deleteLater()
-                self._report_xml_batch(batch)
-
-        timer.timeout.connect(poll)
-        timer.start()
+            if not (cycle_done or no_service or now > batch["deadline"]):
+                return
+            batch["timer"].stop()
+            batch["timer"].deleteLater()
+            self._report_xml_batch(batch)
+        except Exception as exc:
+            # Never silent: a windowed EXE has no console, and a lost exception
+            # here meant the operator got no MES warning at all.
+            batch["timer"].stop()
+            self._log_xml_check(f"end-of-run check failed: {exc!r}", error=True)
 
     def _report_xml_batch(self, batch: dict) -> None:
         not_sent = [
@@ -2567,22 +2575,50 @@ class MainWindow(QMainWindow):
         ]
         if batch["files"] and not not_sent:
             self.append_trace(f"{len(batch['files'])} XML report(s) transferred to MES.")
+        if not_sent:
+            self._log_xml_check(
+                f"{len(not_sent)} XML report(s) not transferred to MES yet: {', '.join(not_sent)}",
+                error=True,
+            )
         if self._closing:
             return
-        if batch["notes"]:
-            QMessageBox.warning(self, "Report saved locally", "\n\n".join(batch["notes"]))
-        if batch["errors"]:
-            QMessageBox.warning(
-                self,
-                "XML not queued",
-                "The XML report was saved in the unit's folder but could not be "
-                "queued for the MES transfer:\n\n" + "\n\n".join(batch["errors"]),
-            )
-        if not_sent:
-            self._record_trace(
-                "error",
-                f"{len(not_sent)} XML report(s) not transferred to MES yet: {', '.join(not_sent)}",
-            )
+        batch["not_sent"] = not_sent
+        self._show_xml_batch_messages(batch)
+
+    def _show_xml_batch_messages(self, batch: dict) -> None:
+        """Show the run's messages once no other dialog is open.
+
+        The check usually finishes while the PASS/FAIL result dialog is still
+        up. A second modal opened from a timer inside that dialog's loop can end
+        up hidden or lost, so it waits until the operator has closed it.
+        """
+        if self._closing:
+            return
+        if QApplication.activeModalWidget() is not None:
+            QTimer.singleShot(500, lambda b=batch: self._show_xml_batch_messages(b))
+            return
+        try:
+            if batch["notes"]:
+                QMessageBox.warning(self, "Report saved locally", "\n\n".join(batch["notes"]))
+            if batch["errors"]:
+                QMessageBox.warning(
+                    self,
+                    "XML not queued",
+                    "The XML report was saved in the unit's folder but could not be "
+                    "queued for the MES transfer:\n\n" + "\n\n".join(batch["errors"]),
+                )
+            not_sent = batch.get("not_sent") or []
+            if not not_sent:
+                return
+            try:
+                DatabaseManager().log_audit_action(
+                    "MES warning shown - XML reports not transferred",
+                    username=str(self._user_info.get("username", "")),
+                    employee_id=str(self._user_info.get("employee_id", "")),
+                    details=", ".join(not_sent),
+                )
+            except Exception:
+                pass
             MesWarningDialog(
                 xml_transfer.MES_UNAVAILABLE_TEXT,
                 title="MES connection unavailable",
@@ -2594,6 +2630,21 @@ class MainWindow(QMainWindow):
                 ),
                 parent=self,
             ).exec()
+        except Exception as exc:
+            self._log_xml_check(f"MES warning could not be shown: {exc!r}", error=True)
+
+    def _log_xml_check(self, text: str, *, error: bool = False) -> None:
+        """Trace line plus the encrypted system log, so the check leaves evidence."""
+        if error:
+            self._record_trace("error", text)
+        else:
+            self.append_trace(text)
+        try:
+            get_secure_logger().log_system_event(
+                str(self._user_info.get("username", "")), "XML transfer", text
+            )
+        except Exception:
+            pass
 
     def _ensure_xml_service(self) -> None:
         """Start the transfer service if it is not running (backup to Task Scheduler)."""

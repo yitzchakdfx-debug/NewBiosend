@@ -35,7 +35,37 @@ def _sweep_tmp() -> None:
     tmp.mkdir(parents=True, exist_ok=True)
 
 
+def _install_error_log() -> None:
+    """Write unhandled exceptions to data/logs/errors.log.
+
+    The EXE has no console (`console=False`), so an exception in a Qt slot or a
+    timer was simply lost: the operator saw nothing and there was no trace to
+    find later. This keeps a plain-text record next to the encrypted logs.
+    """
+    import traceback
+    from datetime import datetime
+
+    previous = sys.excepthook
+
+    def hook(exc_type, exc, tb) -> None:
+        try:
+            path = user_data_path("logs", "errors.log")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "a", encoding="utf-8") as handle:
+                handle.write(f"--- {datetime.now():%Y-%m-%d %H:%M:%S}\n")
+                handle.write("".join(traceback.format_exception(exc_type, exc, tb)))
+        except Exception:
+            pass
+        try:
+            previous(exc_type, exc, tb)
+        except Exception:
+            pass
+
+    sys.excepthook = hook
+
+
 def main() -> int:
+    _install_error_log()
     try:
         myappid = 'mycompany.dfxtester.ate.v1'
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
