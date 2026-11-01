@@ -162,10 +162,15 @@ def _measurement_block(parent: ET.Element, rows: list[dict[str, Any]], suffix: s
 
 
 def _test_result(rows: list[dict[str, Any]]) -> str:
-    """Aggregate row outcomes into the single Pass/Fail/N/A the schema allows."""
+    """Aggregate row outcomes into the single Pass/Fail/N/A the schema allows.
+
+    Same rule as the PDF (`report_generator`): N/A only when nothing ran, and a
+    skipped step does not fail a test whose executed steps all passed - so the
+    XML and the PDF of one unit can never disagree.
+    """
     if all(row.get("skipped") for row in rows):
         return "N/A"
-    if all(row.get("passed") for row in rows):
+    if all(row.get("passed") for row in rows if not row.get("skipped")):
         return "Pass"
     return "Fail"
 
