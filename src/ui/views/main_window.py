@@ -53,7 +53,7 @@ from logic.report_templates import read_pdf_template
 from logic.test_groups import TestGroup, always_step_names, build_test_groups
 from ui.report_worker import ReportWorker
 from logic.models import ScriptDocument, TestResultPayload
-from logic.report_generator import ReportGenerator, sanitize_path_segment
+from logic.report_generator import HIDDEN_LIMIT_TEXT, ReportGenerator, limits_hidden, sanitize_path_segment
 from logic.roles import Capability, can
 from logic.script_manager import ScriptManager, ScriptParseError
 from logic.secure_logger import get_secure_logger
@@ -468,6 +468,9 @@ class MainWindow(QMainWindow):
         )
 
     def reset_counters(self) -> None:
+        self._batch_pass_count = 0
+        self._batch_fail_count = 0
+        self._units_counted_failed = set()
         self.control_panel.label_pass.setText("PASS: 0")
         self.control_panel.label_fail.setText("FAIL: 0")
         self.control_panel.progress_total.setValue(0)
@@ -934,6 +937,7 @@ class MainWindow(QMainWindow):
         # production run, and the counter slot raised AttributeError.
         self._batch_pass_count = 0
         self._batch_fail_count = 0
+        self._units_counted_failed: set[str] = set()
 
         self.bottom_tabs = QTabWidget()
         self.bottom_tabs.setObjectName("bottom_tabs")
@@ -1047,16 +1051,6 @@ class MainWindow(QMainWindow):
                 path.unlink()
         except OSError:
             pass
-
-    @staticmethod
-    def _parse_labeled_counter(text: str, prefix: str) -> int:
-        needle = prefix + ":"
-        if needle in text:
-            try:
-                return int(text.split(needle, 1)[1].strip())
-            except ValueError:
-                return 0
-        return 0
 
     def _unlock_pre_test_fields(self) -> None:
         self._pre_test_locked = False
@@ -1744,9 +1738,9 @@ class MainWindow(QMainWindow):
         self.control_panel.edit_current_unit.clear()
         self.control_panel.label_pass.setText("PASS: 0")
         self.control_panel.label_fail.setText("FAIL: 0")
-        self.control_panel.label_batch_summary.setText("Batch: 0 PASS / 0 FAIL")
         self._batch_pass_count = 0
         self._batch_fail_count = 0
+        self._units_counted_failed: set[str] = set()
 
         self.control_panel.btn_stop.setEnabled(True)
         self.control_panel.btn_start.setEnabled(False)
@@ -1928,20 +1922,44 @@ class MainWindow(QMainWindow):
             row = self._unit_rows.get(int(payload.get("slot_index", 0) or 0))
             if row is not None:
                 row.mark_failed("NO COMM")
+            self._uncount_unit(self._unit_key(payload))
             return
         if payload.get("aborted"):
-            return  # stopped by the operator: neither a pass nor a fail
+            # Stopped by the operator: neither a pass nor a fail.
+            self._uncount_unit(self._unit_key(payload))
+            return
         passed = bool(payload.get("passed"))
         if passed:
+            # A unit counts as PASS only once it has finished, all tests passed.
             self._batch_pass_count += 1
         else:
-            self._batch_fail_count += 1
+            self._count_unit_failed(self._unit_key(payload))
             row = self._unit_rows.get(int(payload.get("slot_index", 0) or 0))
             if row is not None:
                 row.mark_failed()
-        self.control_panel.label_batch_summary.setText(
-            f"Batch: {self._batch_pass_count} PASS / {self._batch_fail_count} FAIL"
-        )
+        self._show_unit_counters()
+
+    @staticmethod
+    def _unit_key(data: dict) -> str:
+        return str(data.get("serial_number") or data.get("position_label") or "unit")
+
+    def _count_unit_failed(self, key: str) -> None:
+        """A unit counts as one FAIL, from its first failed test onwards."""
+        if key not in self._units_counted_failed:
+            self._units_counted_failed.add(key)
+            self._batch_fail_count += 1
+
+    def _uncount_unit(self, key: str) -> None:
+        """Take back a FAIL counted from a failed step when the unit gets no verdict
+        (link lost, or stopped by the operator)."""
+        if key in self._units_counted_failed:
+            self._units_counted_failed.discard(key)
+            self._batch_fail_count -= 1
+            self._show_unit_counters()
+
+    def _show_unit_counters(self) -> None:
+        self.control_panel.label_pass.setText(f"PASS: {self._batch_pass_count}")
+        self.control_panel.label_fail.setText(f"FAIL: {self._batch_fail_count}")
 
     def _on_unit_alert(self, message: str) -> None:
         QMessageBox.warning(self, "Unit Alert", message)
@@ -2283,7 +2301,8 @@ class MainWindow(QMainWindow):
             measured = f"{value:.2f} {unit}".rstrip()
         allowed = ""
         if (
-            isinstance(lo, (int, float)) and isinstance(hi, (int, float))
+            not limits_hidden(result)
+            and isinstance(lo, (int, float)) and isinstance(hi, (int, float))
             and math.isfinite(lo) and math.isfinite(hi)
         ):
             allowed = f"(OK {lo:g}-{hi:g} {unit})".replace(" )", ")")
@@ -2307,8 +2326,11 @@ class MainWindow(QMainWindow):
         if is_measurement:
             unit_str = result["unit"]
             val_str = f"{_format_measurement(result['value'])} {unit_str}".rstrip()
-            min_str = _format_measurement(result["min"])
-            max_str = _format_measurement(result["max"])
+            if limits_hidden(result, test_name):
+                min_str = max_str = HIDDEN_LIMIT_TEXT
+            else:
+                min_str = _format_measurement(result["min"])
+                max_str = _format_measurement(result["max"])
         else:
             val_str = _NA
             min_str = _NA
@@ -2329,15 +2351,16 @@ class MainWindow(QMainWindow):
             self.results_table.resizeRowToContents(row)
 
     def _update_pass_fail_counters(self, result: TestResultPayload) -> None:
-        if result.get("skipped"):
-            return  # N/A rows are neither a pass nor a fail
-        passed = bool(result["passed"])
-        if passed:
-            n = self._parse_labeled_counter(self.control_panel.label_pass.text(), "PASS") + 1
-            self.control_panel.label_pass.setText(f"PASS: {n}")
-        else:
-            n = self._parse_labeled_counter(self.control_panel.label_fail.text(), "FAIL") + 1
-            self.control_panel.label_fail.setText(f"FAIL: {n}")
+        """Counters count units, not steps (2026-11-01).
+
+        FAIL goes up as soon as a unit's first test fails, once per unit. PASS
+        goes up only when a unit has finished with every test passed - see
+        `_on_unit_finished`.
+        """
+        if result.get("skipped") or result.get("passed"):
+            return
+        self._count_unit_failed(self._unit_key(result))
+        self._show_unit_counters()
 
     def update_results_table(self, test_name: str, result: TestResultPayload) -> None:
         """Add a step result; the steps of one measurement point share a row.

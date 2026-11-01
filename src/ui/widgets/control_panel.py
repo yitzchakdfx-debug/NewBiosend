@@ -343,11 +343,6 @@ class ControlPanelWidget(QWidget):
         counters.addWidget(self.label_fail)
         status_layout.addLayout(counters)
 
-        self.label_batch_summary = QLabel("Batch: 0 PASS / 0 FAIL")
-        self.label_batch_summary.setObjectName("lbl_batch_summary")
-        self.label_batch_summary.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        status_layout.addWidget(self.label_batch_summary)
-
         loops_row = QHBoxLayout()
         loops_row.setSpacing(4)
         loops_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)

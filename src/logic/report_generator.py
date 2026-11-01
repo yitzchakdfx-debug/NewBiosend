@@ -306,6 +306,19 @@ def _column_pairs(template: dict[str, Any], key: str) -> list[tuple[str, str]]:
     return pairs or [(str(a), str(b)) for a, b in DEFAULT_PDF_TEMPLATE[key]]
 
 
+#: Tests whose Min/Max are shown as "-" (screen, PDF, CSV). The Polarity Check
+#: limits are internal (a no-output floor and a sanity ceiling), not a spec
+#: range, and printing them confused readers (2026-11-01).
+HIDDEN_LIMIT_TESTS = frozenset({"Polarity Check"})
+HIDDEN_LIMIT_TEXT = "-"
+
+
+def limits_hidden(row: dict[str, Any], test_name: str = "") -> bool:
+    """True if this result's Min/Max are not shown."""
+    names = {str(row.get("report_test", "")), str(row.get("test_name", "")), str(test_name)}
+    return bool(names & HIDDEN_LIMIT_TESTS)
+
+
 def _row_cells(
     row: dict[str, Any],
     columns: list[tuple[str, str]],
@@ -335,6 +348,8 @@ def _row_cells(
             # A merged measurement point: "23.6 V · 0.436 A · 11.2 W · 57.6 Ω".
             text = "" if skipped else str(row["value_text"])
             cells.append(Paragraph(escape(text), styles["Normal"]))
+        elif field in ("min", "max") and limits_hidden(row):
+            cells.append(HIDDEN_LIMIT_TEXT)
         else:  # min / max / value — blank rather than 0 for a step never run
             cells.append("" if skipped else _fmt_num(row.get(field)))
     return cells
@@ -607,6 +622,8 @@ def _write_csv(
                     cells.append(status)
                 elif field == "unit":
                     cells.append("" if skipped else str(row.get("unit", "")))
+                elif field in ("min", "max") and limits_hidden(row):
+                    cells.append(HIDDEN_LIMIT_TEXT)
                 else:
                     cells.append("" if skipped else _fmt_num(row.get(field)))
             writer.writerow(cells)

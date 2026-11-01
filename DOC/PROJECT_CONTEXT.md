@@ -909,6 +909,17 @@ only one — so no new connection is opened:
 
 ---
 
+## PASS / FAIL counters and the Polarity Check limits (2026-11-01)
+
+- The two coloured counters under Status count **units**, not steps. FAIL goes
+  up as soon as a unit's first test fails (once per unit); PASS goes up only
+  when a unit finishes with every test passed. The old "Batch: n PASS / n FAIL"
+  line is removed. Stopped and link-lost units are not counted.
+- The Polarity Check's Min/Max (an internal no-output floor and sanity ceiling,
+  not a spec range) are shown as "-" on screen, in the PDF and in the CSV
+  (`report_generator.limits_hidden`). Pass/fail is unchanged; the stored result
+  keeps the real limits.
+
 ## Customer logo
 
 The J&J MedTech logo (supplied by the customer, 2026-11-01) is shown in the
