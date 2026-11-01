@@ -77,6 +77,8 @@ PRODIGIT_VISA_RESOURCE: str = get_str("PRODIGIT_VISA_RESOURCE", "")
 # Defaults below match the station-tested setup (2026-10-29), so a customer
 # .env that omits them still works. "@py" = pyvisa-py: no NI-VISA needed.
 PRODIGIT_VISA_BACKEND: str = get_str("PRODIGIT_VISA_BACKEND", "@py")
+# Port used when the load address is given as a plain IP (3300G LAN controller).
+PRODIGIT_LAN_PORT: str = get_str("PRODIGIT_LAN_PORT", "4001")
 PRODIGIT_VISA_TIMEOUT_MS: str = get_str("PRODIGIT_VISA_TIMEOUT_MS", "5000")
 # Shorter timeout used only by the pre-test channel scan, where a responsive
 # device answers in ~50 ms. Caps non-responding channels/probes instead of

@@ -142,8 +142,12 @@ def resolved_visa_resource() -> str:
     """
     global _resource_cache
     if _resource_cache is None:
+        from drivers.visa_address import normalize_resource
+
         stored = _stored_settings().get(LOAD_RESOURCE_KEY, "").strip()
-        _resource_cache = stored or PRODIGIT_VISA_RESOURCE.strip()
+        # Completed here, so the driver, the link LED and the stale-session
+        # kick all see the full VISA string even when only an IP was typed.
+        _resource_cache = normalize_resource(stored or PRODIGIT_VISA_RESOURCE.strip())
     return _resource_cache
 
 

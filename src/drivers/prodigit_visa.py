@@ -140,10 +140,10 @@ def _problem_kind(exc: Exception) -> str:
 
 
 def normalize_resource(name: str) -> str:
-    """`COM3` -> `ASRL3::INSTR` (a USB link that shows up as a COM port); others unchanged."""
-    text = (name or "").strip()
-    match = re.fullmatch(r"COM(\d+)", text, re.IGNORECASE)
-    return f"ASRL{match.group(1)}::INSTR" if match else text
+    """Plain IP / IP:port -> TCPIP SOCKET, `COM3` -> `ASRL3::INSTR` (see `drivers.visa_address`)."""
+    from drivers.visa_address import normalize_resource as _normalize
+
+    return _normalize(name)
 
 
 def _is_serial(resource_name: str) -> bool:

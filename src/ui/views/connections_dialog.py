@@ -90,16 +90,28 @@ class ConnectionsDialog(QDialog):
         self._edit_load.setObjectName("conn_load_resource")
         env_addr = PRODIGIT_VISA_RESOURCE.strip()
         self._edit_load.setPlaceholderText(
-            f"blank = use .env  ({env_addr or 'auto-discover USB'})"
+            f"e.g. 192.168.16.123   (blank = use .env: {env_addr or 'auto-discover USB'})"
         )
         self._edit_load.setToolTip(
-            "LAN: TCPIP0::192.168.16.123::4001::SOCKET\n"
-            "USB as a COM port: COM3 (or ASRL3::INSTR)\n"
-            "USBTMC: USB0::<vendor>::<product>::<serial>::INSTR"
+            "LAN: the load's IP, e.g. 192.168.16.123 (port 4001 is added)\n"
+            "USB as a COM port: COM3\n"
+            "A full VISA string also works, e.g. TCPIP0::192.168.16.123::4001::SOCKET"
         )
         self._initial_load = stored_settings.get(LOAD_RESOURCE_KEY, "").strip()
         self._edit_load.setText(self._initial_load)
-        backend_form.addRow("Electronic load address", self._edit_load)
+        # Shows what the program will actually use, so a plain IP is visibly
+        # completed to the VISA form pyvisa needs.
+        self._load_effective = QLabel()
+        self._load_effective.setObjectName("conn_load_effective")
+        self._edit_load.textChanged.connect(self._show_effective_load)
+        self._show_effective_load(self._initial_load)
+        load_box = QWidget()
+        load_layout = QVBoxLayout(load_box)
+        load_layout.setContentsMargins(0, 0, 0, 0)
+        load_layout.setSpacing(2)
+        load_layout.addWidget(self._edit_load)
+        load_layout.addWidget(self._load_effective)
+        backend_form.addRow("Electronic load address", load_box)
         root.addLayout(backend_form)
 
         note = QLabel(
@@ -182,6 +194,12 @@ class ConnectionsDialog(QDialog):
         root.addWidget(buttons)
         # Sized to the content: a fixed height squashed the rows.
         self.resize(560, self.sizeHint().height())
+
+    def _show_effective_load(self, text: str) -> None:
+        from drivers.visa_address import normalize_resource
+
+        value = normalize_resource(text.strip() or PRODIGIT_VISA_RESOURCE.strip())
+        self._load_effective.setText(f"\u2192 {value}" if value else "\u2192 auto-discover (USB)")
 
     def _folder_row(self, edit: QLineEdit) -> QWidget:
         """A path field with a Browse... button."""
