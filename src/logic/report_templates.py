@@ -55,8 +55,11 @@ DEFAULT_XML_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
 
   Elements and attributes may be added, removed, renamed or reordered. Anything
   that is not a placeholder is copied through verbatim.
+
+  type="PS_Test" identifies the report kind to the customer's MES (requested
+  2026-11-02); DFX_Tester_Report.xsd requires it.
 -->
-<TestReport>
+<TestReport type="PS_Test">
     <Information>
         <ProductName>{{uut_type}}</ProductName>
         <OperatorName>{{tester_name}}</OperatorName>
@@ -190,14 +193,34 @@ def _template_path(name: str):
     return template_dir() / name
 
 
+#: Earlier shipped defaults, comments aside. A station whose XML template still
+#: matches one of these was never edited, so it is moved to the new default.
+_PREVIOUS_XML_DEFAULTS = (
+    DEFAULT_XML_TEMPLATE.replace('<TestReport type="PS_Test">', "<TestReport>"),
+)
+
+
+def _xml_body(text: str) -> str:
+    """Template text without comments and whitespace, to compare structure only."""
+    return re.sub(r"\s+", "", re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL))
+
+
 def ensure_templates_seeded() -> None:
-    """Write the default templates to disk if they are not there yet."""
+    """Write the default templates to disk if they are not there yet.
+
+    An XML template that is still an earlier default (never edited by an Admin)
+    is replaced by the current default; an edited one is left alone.
+    """
     directory = template_dir()
     try:
         directory.mkdir(parents=True, exist_ok=True)
         xml_path = _template_path(XML_TEMPLATE_NAME)
         if not xml_path.exists():
             xml_path.write_text(DEFAULT_XML_TEMPLATE, encoding="utf-8")
+        else:
+            stored = _xml_body(xml_path.read_text(encoding="utf-8"))
+            if stored in {_xml_body(t) for t in _PREVIOUS_XML_DEFAULTS}:
+                xml_path.write_text(DEFAULT_XML_TEMPLATE, encoding="utf-8")
         pdf_path = _template_path(PDF_TEMPLATE_NAME)
         if not pdf_path.exists():
             pdf_path.write_text(

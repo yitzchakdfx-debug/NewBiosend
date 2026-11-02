@@ -928,6 +928,15 @@ of every PDF report. PDF: template `logo_path` empty = this logo
 (`report_generator.CUSTOMER_LOGO`, a PNG rendered from the SVG), `none` = no
 logo, anything else = an image file.
 
+## XML root attribute type="PS_Test" (2026-11-02)
+
+The MES asked for the report kind on the root element: every XML starts with
+`<TestReport type="PS_Test">` (default XML template, `report_templates.py`). A
+station whose saved template is still an earlier, unedited default is moved to
+the new one at startup (`ensure_templates_seeded`, compared without comments
+and whitespace); an Admin-edited template is never touched. The XSD sent to the
+MES (`DFX_Tester_Report.xsd`) requires the attribute.
+
 ## XML transfer to MES (customer POD "XML Transfer Service")
 
 The customer's POD (draft) defines how XML reports reach CAMSTAR and what happens
