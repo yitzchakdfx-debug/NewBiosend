@@ -95,7 +95,7 @@ free tools can extract and decompile. The protected build compiles every module
 of ours to native code first (Cython, needs the MSVC Build Tools):
 
     venv\Scripts\python.exe -m pip install -r requirements-build.txt
-    venv\Scripts\python.exe toolsbuild_protected.py
+    venv\Scripts\python.exe tools\build_protected.py
     venv\Scripts\python.exe -m PyInstaller --noconfirm DFX_Tester_protected.spec
 
 Behaviour is identical; test the compiled tree (`build/protected/run`) with the
