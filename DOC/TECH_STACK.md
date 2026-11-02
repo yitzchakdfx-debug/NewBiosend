@@ -88,6 +88,19 @@ The UI is themed entirely through Qt Style Sheets. Required fluency:
   code works identically when launched from source and when frozen by
   PyInstaller.
 
+### Protected build (code not shipped as bytecode)
+
+The normal build keeps our modules as Python bytecode inside the EXE, which
+free tools can extract and decompile. The protected build compiles every module
+of ours to native code first (Cython, needs the MSVC Build Tools):
+
+    venv\Scripts\python.exe -m pip install -r requirements-build.txt
+    venv\Scripts\python.exe toolsbuild_protected.py
+    venv\Scripts\python.exe -m PyInstaller --noconfirm DFX_Tester_protected.spec
+
+Behaviour is identical; test the compiled tree (`build/protected/run`) with the
+usual tests before packaging. Source in `src/` is never changed by this.
+
 ## 6. Cryptography & secure logging
 
 - **`cryptography.fernet`** — symmetric authenticated encryption of one JSON

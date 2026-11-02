@@ -121,6 +121,9 @@ materially changed.
 | `install/uninstall_xml_service_task.cmd` | **(NEW)** Stops the service and removes the task (before an update or to uninstall). |
 | `DFX_Tester.spec`     | **(NEW)** PyInstaller onedir spec. Builds two EXEs into one folder sharing `_internal`: `DFX_Tester.exe` and the Qt-free `DFX_XmlTransfer.exe`. Bundles assets + seed data; force-includes `cryptography`. **Excludes `serial`** even though `connection_settings_form.py` imports it (falls back to a static port list — see audit). |
 | `build.ps1`           | **(NEW)** PowerShell build driver: installs deps + PyInstaller, cleans, runs the spec, prints the bundle path.    |
+| `tools/build_protected.py` | **(NEW)** Protected build, step 1: copies `src` to `build/protected/`, turns `main.py`/`xml_service.py` into 3-line stubs (code moved to `dfx_main`/`dfx_xml_service`), compiles every module of ours to a `.pyd` with Cython + MSVC (annotations not enforced), and makes `build/protected/run/` for testing the compiled code. Stops if any module fails to compile. |
+| `DFX_Tester_protected.spec` | **(NEW)** Protected build, step 2: runs `DFX_Tester.spec` with `PROTECTED_BUILD`, which analyses the sources (to find third-party imports), drops our bytecode from the PYZ and ships the `.pyd` instead. Only the empty package `__init__` files and the entry stubs remain as bytecode. |
+| `requirements-build.txt` | **(NEW)** Build-time only: Cython, PyInstaller. |
 | `.pylintrc`           | Pylint config; whitelists PySide6 C-extensions.                                                                   |
 | `.gitignore`          | Ignores build output, venvs, `*.db`/`*.lock`/`*.log`, `src/data/results/`, `*.csv/*.json/*.txt`, and `*PLAN*.md`. |
 

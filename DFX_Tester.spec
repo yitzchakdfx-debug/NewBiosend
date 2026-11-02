@@ -23,6 +23,13 @@ from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, co
 SPEC_DIR = Path(SPECPATH).resolve()
 SRC = SPEC_DIR / "src"
 
+# Protected build (DFX_Tester_protected.spec sets PROTECTED_BUILD): the scripts
+# and modules come from build/protected (made by tools/build_protected.py) and
+# every module of ours ships as a compiled .pyd instead of bytecode in the PYZ.
+PROTECTED = bool(globals().get("PROTECTED_BUILD", False))
+CODE = SPEC_DIR / "build" / "protected" / "py" if PROTECTED else SRC
+COMPILED = SPEC_DIR / "build" / "protected" / "pyd"
+
 # Bundled read-only resources. The first element is the absolute source
 # path; the second is the destination path relative to the bundle root
 # (i.e. sys._MEIPASS at runtime). The layout mirrors src/ so that
@@ -125,8 +132,8 @@ excludes = [
 
 
 a = Analysis(
-    [str(SRC / "main.py")],
-    pathex=[str(SRC)],
+    [str(CODE / "main.py")],
+    pathex=[str(CODE)],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
@@ -137,6 +144,43 @@ a = Analysis(
     noarchive=False,
 )
 
+
+
+def _protect(analysis):
+    """Drop our bytecode from the PYZ and ship the compiled .pyd in its place.
+
+    The analysis still ran on the sources, so every third-party import our
+    code makes was found. Package __init__ files stay (docstrings only).
+    Stops the build if any module of ours has no compiled counterpart.
+    """
+    code = CODE.resolve()
+    ours = {
+        p.resolve().relative_to(code).with_suffix("").as_posix()
+        for p in code.rglob("*.py")
+        if p.name != "__init__.py" and "data" not in p.relative_to(code).parts
+    } - {"main", "xml_service"}  # the 3-line entry stubs
+    compiled = {}
+    for pyd in COMPILED.rglob("*.pyd"):
+        rel = pyd.relative_to(COMPILED)
+        compiled[(rel.parent / rel.name.split(".")[0]).as_posix()] = (rel.as_posix(), str(pyd))
+    lacking = sorted(ours - set(compiled))
+    if lacking:
+        raise SystemExit(f"Protected build: not compiled: {lacking}")
+
+    def is_ours(entry):
+        try:
+            rel = Path(entry[1]).resolve().relative_to(code)
+        except (ValueError, OSError, TypeError):
+            return False
+        return rel.with_suffix("").as_posix() in ours
+
+    analysis.pure = [e for e in analysis.pure if not is_ours(e)]
+    for dest, src in compiled.values():
+        analysis.binaries.append((dest, src, "EXTENSION"))
+
+
+if PROTECTED:
+    _protect(a)
 pyz = PYZ(a.pure)
 
 exe = EXE(
@@ -159,8 +203,8 @@ exe = EXE(
 # running when the GUI is closed), so it is its own EXE rather than a thread.
 # No Qt: it only copies files, so its analysis excludes PySide6 entirely.
 svc = Analysis(
-    [str(SRC / "xml_service.py")],
-    pathex=[str(SRC)],
+    [str(CODE / "xml_service.py")],
+    pathex=[str(CODE)],
     binaries=[],
     datas=[],
     hiddenimports=["dotenv"],
@@ -170,6 +214,8 @@ svc = Analysis(
     excludes=excludes + ["PySide6", "shiboken6", "reportlab", "PIL", "pyvisa", "pyvisa_py", "serial", "usb"],
     noarchive=False,
 )
+if PROTECTED:
+    _protect(svc)
 svc_pyz = PYZ(svc.pure)
 svc_exe = EXE(
     svc_pyz,
