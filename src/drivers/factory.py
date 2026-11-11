@@ -44,6 +44,10 @@ LOAD_RESOURCE_KEY = "__load_visa_resource__"
 RESULTS_DIR_KEY = "__results_dir__"
 XML_DIR_KEY = "__xml_dir__"
 
+#: Catalog version id of the test that was active last; the station opens on
+#: it next time (see `MainWindow._load_latest_version`).
+LAST_TEST_KEY = "__last_test_version__"
+
 
 def load_serial_key(slot: int) -> str:
     """Database key of the Admin-entered S/N of the load module on channel `slot`."""

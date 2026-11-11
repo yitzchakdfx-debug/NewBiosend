@@ -46,7 +46,7 @@ import shiboken6
 from config import SHOW_NIGHT_MODE, SHOW_SEARCH_BAR
 from logic.load_serials import load_serials
 from drivers.base_driver import BaseDriver, HardwareError
-from drivers.factory import create_driver, is_simulated, resolve_station_config, resolved_visa_resource
+from drivers.factory import LAST_TEST_KEY, create_driver, is_simulated, resolve_station_config, resolved_visa_resource
 from drivers.prodigit_visa import normalize_resource
 from logic.database_manager import DatabaseManager
 from logic.report_templates import read_pdf_template
@@ -1193,6 +1193,17 @@ class MainWindow(QMainWindow):
         self._catalog_uut_type = uut_type
         self.control_panel.edit_uut_type.setText(uut_type)
         self._reload_script_into_list(quiet=quiet)
+        if self._catalog_version_id is not None and self._active_document is not None:
+            self._remember_last_test(self._catalog_version_id)
+
+    def _remember_last_test(self, version_id: int) -> None:
+        """The station opens on this test next time (shared station: not per user)."""
+        try:
+            DatabaseManager().upsert_instrument_connection(
+                LAST_TEST_KEY, str(version_id), str(self._user_info.get("username", ""))
+            )
+        except Exception:
+            pass  # a convenience only - never block activating a test
 
     def _clear_active_test(self, label: str) -> None:
         """No active test (e.g. its catalog version was deleted)."""
@@ -1233,13 +1244,25 @@ class MainWindow(QMainWindow):
         return self._active_document is not None
 
     def _load_latest_version(self) -> bool:
-        """Start with the newest catalog version; False if there is none usable.
+        """Start on the test that was active last; else the newest catalog version.
 
-        Quiet: at startup the window is not shown yet, so a parse error is
-        logged rather than popped up, and the old start (Select Product) runs.
+        False if there is none usable. Quiet: at startup the window is not
+        shown yet, so a parse error is logged rather than popped up, and the old
+        start (Select Product) runs. A last test that was deleted, or no longer
+        loads, falls back to the newest version.
         """
+        rec = None
         try:
-            rec = DatabaseManager().latest_test_version()
+            db = DatabaseManager()
+            last = db.list_instrument_connections().get(LAST_TEST_KEY, "").strip()
+            if last.isdigit():
+                rec = db.get_test_version(int(last))
+                if rec and self._activate_catalog_content(
+                    str(rec["test_name"]), str(rec["version_name"]), str(rec["uut_type"]),
+                    str(rec["test_content"]), rec.get("id"), quiet=True,
+                ):
+                    return True
+            rec = db.latest_test_version()
         except Exception:
             rec = None
         if not rec:

@@ -920,6 +920,15 @@ only one — so no new connection is opened:
   (`report_generator.limits_hidden`). Pass/fail is unchanged; the stored result
   keeps the real limits.
 
+## Start on the last test used (2026-11-11)
+
+Every catalog version that becomes the active test is remembered for the station
+(`LAST_TEST_KEY = "__last_test_version__"` in `instrument_connections`, written by
+`MainWindow._remember_last_test`). At startup `_load_latest_version` opens that
+version; if it was deleted or does not load, it falls back to the newest catalog
+version as before. Per station, not per user. A version an Admin saves becomes
+active, so it is also the one opened next time.
+
 ## Main window width (2026-11-11)
 
 On the station the window widened past the right edge during a run: the top bar
