@@ -640,6 +640,17 @@ timeout (...) on 'MEAS:VOLT?' after 5.0 s (last good reply ... ; 18 commands in
 the 1 s before it)". Behaviour is unchanged; the next step depends on what the
 station logs show (fewer commands if timeouts under load, cable/USB if resets).
 
+*Tried and dropped (2026-11-11).* The logs show timeouts only (about 20
+commands/s before each; 13 in a 31-minute 4-unit run). Two ways to send fewer
+commands were tried on the station and not kept: (1) select and query in one
+message (`CHAN n;MEAS:VOLT?`) - two of four tries got no reply and the next
+query timed out too; (2) skipping `CHAN n` when that channel is already
+selected - safe and correct on the station, but in a parallel run the channel
+changes before almost every command, so the 31-minute 4-unit run still had 14
+timeouts at the same ~20 commands/s. Each drop costs ~5 s of monitoring on all
+units and recovers by itself; the remaining option is a slower parallel polling
+rate (not done).
+
 **Freeing the port after a cable pull** (2026-10-29, `drivers/link_recovery.py`).
 The 3300G's LAN side is an embedded Metavert controller (web page on :80,
 firmware "Dec 26 2007") that allows one TCP session and never notices a dead
