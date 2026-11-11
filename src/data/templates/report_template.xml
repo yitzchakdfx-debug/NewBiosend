@@ -2,7 +2,8 @@
 <!--
   CAMSTAR test-report template.
 
-  {{placeholders}} are replaced with run values. Available names:
+  Placeholders written as {{ name }} (without the spaces) are replaced with run
+  values. Available names:
     uut_type, tester_name, employee_id, serial_number, part_number,
     start_time, end_time, overall_result, test_program_name,
     load_channel_id, test_load_model, tester_serial, software_version
@@ -12,8 +13,11 @@
 
   Elements and attributes may be added, removed, renamed or reordered. Anything
   that is not a placeholder is copied through verbatim.
+
+  type="PS_Test" identifies the report kind to the customer's MES (requested
+  2026-11-02); DFX_Tester_Report.xsd requires it.
 -->
-<TestReport>
+<TestReport type="PS_Test">
     <Information>
         <ProductName>{{uut_type}}</ProductName>
         <OperatorName>{{tester_name}}</OperatorName>
