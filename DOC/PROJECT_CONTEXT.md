@@ -920,6 +920,16 @@ only one — so no new connection is opened:
   (`report_generator.limits_hidden`). Pass/fail is unchanged; the stored result
   keeps the real limits.
 
+## Main window width (2026-11-11)
+
+On the station the window widened past the right edge during a run: the top bar
+(product label, the load and MES LEDs, two 220 px logos) was a row of labels
+whose minimum width is their full text, and the LED texts get longer during a run
+("Load not answering - switch the 3300G off and on"). Now the product label and
+LED texts are `ElidedLabel`s, the logos are `ScaledLogo`s, and the window's
+maximum width follows the screen it is on (`_cap_width_to_screen`). Measured
+minimum width: 2124 px during a 4-unit run before, 1240 px after.
+
 ## Customer logo
 
 The J&J MedTech logo (supplied by the customer, 2026-11-01) is shown in the

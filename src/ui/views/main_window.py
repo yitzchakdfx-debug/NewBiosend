@@ -72,6 +72,7 @@ from ui.views.user_management_dialog import UserManagementDialog
 from ui.views.version_manager_dialog import VersionManagerDialog
 from ui.widgets.control_panel import ControlPanelWidget, UnitProgressRow
 from ui.widgets.link_led import MES_TEXT, LinkLed, PingProbe, host_from_visa, port_from_visa
+from ui.widgets.fit_labels import ElidedLabel, ScaledLogo
 from logic import xml_transfer
 from ui.views.mes_dialogs import MesAccessProbe, MesWarningDialog
 from logic import report_paths
@@ -680,7 +681,9 @@ class MainWindow(QMainWindow):
         self.btn_audit.clicked.connect(self.open_audit_viewer)
         ribbon.addWidget(self.btn_audit)
 
-        self.label_active_script = QLabel("")
+        # Elided: a long product/version name must not widen the window.
+        self.label_active_script = ElidedLabel("", min_chars=8)
+        self.label_active_script.setMaximumWidth(360)
         ribbon.addSpacing(12)
         ribbon.addWidget(self.label_active_script)
 
@@ -688,7 +691,7 @@ class MainWindow(QMainWindow):
         # TCP connection: the 3300G takes only one, and the scan or the next run
         # needs it); during a run by the driver's own link events.
         self.link_led = LinkLed(self)
-        ribbon.addSpacing(24)
+        ribbon.addSpacing(12)
         ribbon.addWidget(self.link_led, 0, Qt.AlignmentFlag.AlignVCenter)
         self._link_host = host_from_visa(resolved_visa_resource())
         self._link_port = port_from_visa(resolved_visa_resource())
@@ -709,7 +712,7 @@ class MainWindow(QMainWindow):
         # MES-folder indicator, fed by the XML transfer service's status file.
         self.mes_led = LinkLed(self, MES_TEXT)
         self.mes_led.setObjectName("mes_led")
-        ribbon.addSpacing(16)
+        ribbon.addSpacing(10)
         ribbon.addWidget(self.mes_led, 0, Qt.AlignmentFlag.AlignVCenter)
         self._mes_timer = QTimer(self)
         self._mes_timer.setInterval(3000)
@@ -718,35 +721,24 @@ class MainWindow(QMainWindow):
 
         ribbon.addStretch()
 
-        # The customer's logo, ahead of ours.
-        self.lbl_customer_logo = QLabel()
-        self.lbl_customer_logo.setObjectName("customer_logo")
+        # The customer's logo, ahead of ours. Both logos shrink (keeping their
+        # proportions) when the screen is narrow, instead of widening the window.
         customer_logo = self._ICONS_DIR / "JJMedTechLogo.svg"
-        if customer_logo.is_file():
-            self.lbl_customer_logo.setPixmap(
-                QIcon(str(customer_logo)).pixmap(QSize(220, 44))
-            )
+        self.lbl_customer_logo = ScaledLogo(
+            QIcon(str(customer_logo)).pixmap(QSize(440, 88)) if customer_logo.is_file() else QPixmap(),
+            QSize(220, 44), min_width=100,
+        )
+        self.lbl_customer_logo.setObjectName("customer_logo")
         self.lbl_customer_logo.setToolTip("Johnson & Johnson MedTech")
         ribbon.addWidget(self.lbl_customer_logo, 0, Qt.AlignmentFlag.AlignVCenter)
-        ribbon.addSpacing(16)
+        ribbon.addSpacing(10)
 
-        self.lbl_brand_icon = QLabel()
-        self.lbl_brand_icon.setObjectName("brand_icon")
-        self.lbl_brand_icon.setFixedSize(220, 64)
-        self.lbl_brand_icon.setScaledContents(False)
-        self.lbl_brand_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_brand_icon.setSizePolicy(
-            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
-        )
         bird_path = self._ICONS_DIR / "DFXLogo.png"
-        if bird_path.is_file():
-            pix = QPixmap(str(bird_path)).scaled(
-                self.lbl_brand_icon.width(),
-                self.lbl_brand_icon.height(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            self.lbl_brand_icon.setPixmap(pix)
+        self.lbl_brand_icon = ScaledLogo(
+            QPixmap(str(bird_path)) if bird_path.is_file() else QPixmap(),
+            QSize(220, 64), min_width=100,
+        )
+        self.lbl_brand_icon.setObjectName("brand_icon")
         self.lbl_brand_icon.setToolTip("DFX Tester")
         ribbon.addWidget(self.lbl_brand_icon, 0, Qt.AlignmentFlag.AlignVCenter)
         ribbon.addSpacing(12)
@@ -1002,6 +994,25 @@ class MainWindow(QMainWindow):
         width = min(1200, max(min_size.width(), available.width() - margin))
         height = min(800, max(min_size.height(), available.height() - margin))
         self.resize(width, height)
+        self._cap_width_to_screen()
+
+    def _cap_width_to_screen(self, *_args) -> None:
+        """Never wider than the screen the window is on (2026-11-11).
+
+        Backstop for any label that grows during a run: the window used to widen
+        past the right edge. The cap follows the window to another monitor.
+        """
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is not None:
+            self.setMaximumWidth(screen.availableGeometry().width())
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        handle = self.windowHandle()
+        if handle is not None and not getattr(self, "_screen_cap_hooked", False):
+            handle.screenChanged.connect(self._cap_width_to_screen)
+            self._screen_cap_hooked = True
+        self._cap_width_to_screen()
 
     def _filter_table_results(self, text: str) -> None:
         needle = text.strip().lower()

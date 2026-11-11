@@ -15,6 +15,8 @@ from PySide6.QtCore import QObject, Signal
 from drivers.link_recovery import kick_stale_session
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
+from ui.widgets.fit_labels import ElidedLabel
+
 #: Text shown for each state. Colours live in the .qss (`[state="..."]`).
 _TEXT = {
     "ok": "Load connected",
@@ -59,7 +61,9 @@ class LinkLed(QWidget):
         layout.setSpacing(6)
         self._dot = QLabel()
         self._dot.setObjectName("link_led_dot")
-        self._text = QLabel()
+        # Shortened with "..." when the top bar is tight, so a long state text
+        # never widens the window (2026-11-11). The full text is in the tooltip.
+        self._text = ElidedLabel(tooltip=False, min_chars=6)
         self._text.setObjectName("link_led_text")
         layout.addWidget(self._dot)
         layout.addWidget(self._text)
@@ -74,7 +78,7 @@ class LinkLed(QWidget):
         self._state = state
         self._text.setText(self._texts[state])
         tip = f"{detail}\n" if detail else ""
-        self.setToolTip(f"{tip}Last update: {datetime.now():%H:%M:%S}")
+        self.setToolTip(f"{self._texts[state]}\n{tip}Last update: {datetime.now():%H:%M:%S}")
         for widget in (self._dot, self._text):
             # A property change only restyles after a re-polish.
             widget.setProperty("state", state)
