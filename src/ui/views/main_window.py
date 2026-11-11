@@ -994,25 +994,6 @@ class MainWindow(QMainWindow):
         width = min(1200, max(min_size.width(), available.width() - margin))
         height = min(800, max(min_size.height(), available.height() - margin))
         self.resize(width, height)
-        self._cap_width_to_screen()
-
-    def _cap_width_to_screen(self, *_args) -> None:
-        """Never wider than the screen the window is on (2026-11-11).
-
-        Backstop for any label that grows during a run: the window used to widen
-        past the right edge. The cap follows the window to another monitor.
-        """
-        screen = self.screen() or QApplication.primaryScreen()
-        if screen is not None:
-            self.setMaximumWidth(screen.availableGeometry().width())
-
-    def showEvent(self, event) -> None:  # noqa: N802
-        super().showEvent(event)
-        handle = self.windowHandle()
-        if handle is not None and not getattr(self, "_screen_cap_hooked", False):
-            handle.screenChanged.connect(self._cap_width_to_screen)
-            self._screen_cap_hooked = True
-        self._cap_width_to_screen()
 
     def _filter_table_results(self, text: str) -> None:
         needle = text.strip().lower()
