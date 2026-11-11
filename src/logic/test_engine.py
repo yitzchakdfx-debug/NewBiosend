@@ -1132,11 +1132,13 @@ class TestRunnerThread(QThread):
         tol = _as_float(meta.get("input_tol", ""), self._connected_tol_pct)
         min_v = target * (1.0 - tol / 100.0)
         max_v = target * (1.0 + tol / 100.0)
+        read_ok = True
         try:
             value = self._hw_execute("readinput", [str(unit.slot_index)])
         except Exception as exc:
             self._emit_log("error", f"{unit.serial_number}: input read failed: {exc}")
             value = 0.0
+            read_ok = False
         passed = min_v <= value <= max_v
         payload: TestResultPayload = {
             "value": value,
@@ -1157,6 +1159,19 @@ class TestRunnerThread(QThread):
                 f" at {unit.position_label}.",
             )
             record.overall_passed = False
+            # No output or a reversed UUT stops the run here, before the
+            # polarity gate. Left at that, the Polarity Check was backfilled
+            # N/A and the XML (which has no input-check element) showed four
+            # N/A tests and no Fail at all (Req 19 on the station, 2026-11-11:
+            # the 3316G reads about 0 V, not a negative voltage, when the UUT
+            # is reversed). This reading is the polarity readback - the same
+            # MEAS:VOLT? with the load off - so it is reported as the Polarity
+            # Check result. Only for a real reading below the floor: a failed
+            # read is a link fault, and a positive voltage outside the input
+            # range is not a polarity failure.
+            floor_v = self._polarity_floor_v()
+            if read_ok and self._production_flow and value < floor_v:
+                self._record_polarity(record, unit, value, floor_v)
         return passed
 
     def _check_polarity(self, record: TestRunRecord, unit: BatchUnit) -> bool:
@@ -1195,6 +1210,16 @@ class TestRunnerThread(QThread):
         except Exception as exc:
             self._emit_log("error", f"{unit.serial_number}: polarity check failed: {exc}")
             polarity = 0.0
+        return self._record_polarity(record, unit, polarity, floor_v)
+
+    def _record_polarity(
+        self, record: TestRunRecord, unit: BatchUnit, polarity: float, floor_v: float
+    ) -> bool:
+        """Record the Polarity Check row for `polarity` volts; True if it passed.
+
+        Shared by the polarity gate and the input check (a reading below the
+        floor there is the same readback), so both write the identical row.
+        """
         passed = polarity >= floor_v
         payload: TestResultPayload = {
             "value": polarity,

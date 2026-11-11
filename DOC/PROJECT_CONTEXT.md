@@ -191,6 +191,16 @@ Three consequences worth knowing:
     row with `report_test`/`report_quantity` is added, so the PDF and XML list
     all four tests. N/A step rows now carry their step's limits (blanked in
     every table) so Expected Value can still be stated.
+  - *Reversed or dead UUT -> Polarity Fail (Req 19, 2026-11-11).* On the
+    station a reversed UUT read -0.04 V (the 3316G does not report a negative
+    voltage), failed the Input Connection Check and stopped before any load,
+    but Polarity was backfilled N/A, so the XML (no input-check element)
+    showed four N/A tests and no Fail. `_check_input_connection` now records
+    the Polarity Check itself, as Fail with the reading, when the read
+    succeeded and the value is below the polarity floor (`_record_polarity`,
+    shared with the gate). A positive voltage outside the input range and a
+    failed read keep the N/A row. Report generation is unchanged: this path
+    already produced a FAIL report.
   - *Appendix A header (Req 14).* Default `header_fields`: Product Name,
     Operator Name, Serial Number (UUT), Test Date & Time (`test_datetime`, the
     start, `dd/mm/yyyy HH:MM:SS`), Test Load 3316G Channel ID (SN); then
