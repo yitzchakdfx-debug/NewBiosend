@@ -50,12 +50,14 @@ class AboutDialog(QDialog):
         if badge is not None:
             layout.addWidget(badge)
 
+        # Explicit line breaks, no word wrap: a wrapped label in this fixed-width
+        # dialog was given one line too few at 150 % display scaling, cutting
+        # off "(CR mode)." (seen 2026-11-17). Unwrapped, its height is exact.
         text = QLabel(
             f"<b>{APP_TITLE}</b><br>Version {version}<br><br>"
-            "Electronic load: Prodigit 3300G / 3316G (CR mode)."
+            "Electronic load: Prodigit 3300G / 3316G<br>(CR mode)."
         )
         text.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        text.setWordWrap(True)
         layout.addWidget(text)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
