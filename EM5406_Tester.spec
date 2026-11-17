@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for DFX Tester — Windows GUI build (onedir).
+"""PyInstaller spec for the EM-5406 Tester — Windows GUI build (onedir).
 
-Produces ``dist/DFX_Tester/`` containing ``DFX_Tester.exe`` plus the Qt
+Produces ``dist/EM5406_Tester/`` containing ``EM5406_Tester.exe`` plus the Qt
 and Python DLLs it loads at startup. Read-only data (icons, QSS, seed
 .tst, limits.json) is bundled alongside the EXE; writable state
 (database, logs, results, app.lock) is created in a ``data/`` folder
@@ -23,7 +23,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, co
 SPEC_DIR = Path(SPECPATH).resolve()
 SRC = SPEC_DIR / "src"
 
-# Protected build (DFX_Tester_protected.spec sets PROTECTED_BUILD): the scripts
+# Protected build (EM5406_Tester_protected.spec sets PROTECTED_BUILD): the scripts
 # and modules come from build/protected (made by tools/build_protected.py) and
 # every module of ours ships as a compiled .pyd instead of bytecode in the PYZ.
 PROTECTED = bool(globals().get("PROTECTED_BUILD", False))
@@ -33,7 +33,7 @@ COMPILED = SPEC_DIR / "build" / "protected" / "pyd"
 # Bundled read-only resources. The first element is the absolute source
 # path; the second is the destination path relative to the bundle root
 # (i.e. sys._MEIPASS at runtime). The layout mirrors src/ so that
-# resource_path("ui", "assets", "icons", "BirdAppIcon.png") resolves
+# resource_path("ui", "assets", "icons", "AppIcon.png") resolves
 # identically in dev and in the frozen build.
 datas = [
     (str(SRC / "ui" / "assets" / "icons"), "ui/assets/icons"),
@@ -188,7 +188,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,  # onedir layout — binaries live next to the EXE
-    name="DFX_Tester",
+    name="EM5406_Tester",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -222,7 +222,7 @@ svc_exe = EXE(
     svc.scripts,
     [],
     exclude_binaries=True,
-    name="DFX_XmlTransfer",
+    name="EM5406_XmlTransfer",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -241,5 +241,5 @@ coll = COLLECT(
     svc.datas,
     strip=False,
     upx=False,
-    name="DFX_Tester",
+    name="EM5406_Tester",
 )

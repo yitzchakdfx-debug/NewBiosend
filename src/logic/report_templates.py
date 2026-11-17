@@ -57,7 +57,7 @@ DEFAULT_XML_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
   that is not a placeholder is copied through verbatim.
 
   type="PS_Test" identifies the report kind to the customer's MES (requested
-  2026-11-02); DFX_Tester_Report.xsd requires it.
+  2026-11-02); EM5406_Tester_Report.xsd requires it.
 -->
 <TestReport type="PS_Test">
     <Information>
@@ -209,7 +209,10 @@ def ensure_templates_seeded() -> None:
     """Write the default templates to disk if they are not there yet.
 
     An XML template that is still an earlier default (never edited by an Admin)
-    is replaced by the current default; an edited one is left alone.
+    is replaced by the current default; an edited one is left alone. One whose
+    structure is the current default but whose comments are not (the comment
+    names the XSD file, renamed 2026-11-17) gets the current comments: the
+    report XML is unchanged, since comments are not copied into it.
     """
     directory = template_dir()
     try:
@@ -218,8 +221,11 @@ def ensure_templates_seeded() -> None:
         if not xml_path.exists():
             xml_path.write_text(DEFAULT_XML_TEMPLATE, encoding="utf-8")
         else:
-            stored = _xml_body(xml_path.read_text(encoding="utf-8"))
-            if stored in {_xml_body(t) for t in _PREVIOUS_XML_DEFAULTS}:
+            text = xml_path.read_text(encoding="utf-8")
+            stored = _xml_body(text)
+            outdated = stored in {_xml_body(t) for t in _PREVIOUS_XML_DEFAULTS}
+            old_comments = stored == _xml_body(DEFAULT_XML_TEMPLATE) and text != DEFAULT_XML_TEMPLATE
+            if outdated or old_comments:
                 xml_path.write_text(DEFAULT_XML_TEMPLATE, encoding="utf-8")
         pdf_path = _template_path(PDF_TEMPLATE_NAME)
         if not pdf_path.exists():

@@ -31,7 +31,7 @@ floor operators.
 | Encryption | `cryptography` (Fernet / PBKDF2) |
 | COM ports | `pyserial` (optional; graceful fallback) |
 | Config | `python-dotenv` |
-| Build | PyInstaller onedir (`DFX_Tester.spec`) |
+| Build | PyInstaller onedir (`EM5406_Tester.spec`) |
 | Python | 3.11+ |
 
 ---
@@ -979,7 +979,7 @@ removed the same day).
 ## Customer logo
 
 The J&J MedTech logo (supplied by the customer, 2026-11-01) is shown in the
-main window's top bar before the DFX logo, on the login screen, and at the top
+main window's top bar (the only logo there since 2026-11-17), on the login screen, and at the top
 of every PDF report. PDF: template `logo_path` empty = this logo
 (`report_generator.CUSTOMER_LOGO`, a PNG rendered from the SVG), `none` = no
 logo, anything else = an image file.
@@ -991,7 +991,7 @@ The MES asked for the report kind on the root element: every XML starts with
 station whose saved template is still an earlier, unedited default is moved to
 the new one at startup (`ensure_templates_seeded`, compared without comments
 and whitespace); an Admin-edited template is never touched. The XSD sent to the
-MES (`DFX_Tester_Report.xsd`) requires the attribute.
+MES (`EM5406_Tester_Report.xsd`) requires the attribute.
 
 ## XML transfer to MES (customer POD "XML Transfer Service")
 
@@ -999,7 +999,7 @@ The customer's POD (draft) defines how XML reports reach CAMSTAR and what happen
 when the MES network folder is down. J&J asked for the service to run **outside
 the GUI**, with the GUI monitoring it.
 
-- **Two programs.** `DFX_Tester.exe` (GUI) and `DFX_XmlTransfer.exe`
+- **Two programs.** `EM5406_Tester.exe` (GUI) and `EM5406_XmlTransfer.exe`
   (`src/xml_service.py`, windowless). The service is started at logon by Task
   Scheduler (`install/install_xml_service_task.cmd`); the GUI also starts it
   (`xml_transfer.start_service`) before login and whenever it sees it stopped.

@@ -51,7 +51,7 @@ reason. Everything else (`sqlite3`, `json`, `pathlib`, `dataclasses`, `typing`,
 
 Adding any new runtime dependency requires (1) a pinned `>=` entry in
 `requirements.txt`, (2) a PR justification, (3) an update to this document, and
-(4) a check of `DFX_Tester.spec`'s `excludes`/`hiddenimports`.
+(4) a check of `EM5406_Tester.spec`'s `excludes`/`hiddenimports`.
 
 ### Configuration via `.env`
 
@@ -72,7 +72,7 @@ rather than the variable.
 
 **Never commit `.env`** — it contains site-specific secrets. See
 `DOC/.env.example` for the full key list. `python-dotenv` is listed in
-`requirements.txt` and added to `hiddenimports` in `DFX_Tester.spec`.
+`requirements.txt` and added to `hiddenimports` in `EM5406_Tester.spec`.
 
 ## Tooling (development time)
 
@@ -80,14 +80,14 @@ rather than the variable.
 | ----------- | ---------------------------------------------------- | ------------------- |
 | pylint      | Static analysis                                      | `.pylintrc`         |
 | venv        | Isolated interpreter (`.venv/` or `venv/` at root)   | not in version control |
-| PyInstaller | Packaging (installed on demand by `build.ps1`)       | `DFX_Tester.spec`   |
+| PyInstaller | Packaging (installed on demand by `build.ps1`)       | `EM5406_Tester.spec`   |
 
 ## Deployment
 
 DFX_ate ships as a **PyInstaller onedir** Windows bundle. The toolchain is wired
 into the repo:
 
-- **`DFX_Tester.spec`** — onedir build of `src/main.py`. Bundles `ui/assets/`
+- **`EM5406_Tester.spec`** — onedir build of `src/main.py`. Bundles `ui/assets/`
   (icons + all three `.qss`) and the seed data (`limits.json`,
   `biosense_test.tst`) under paths that mirror `src/`, so `resource_path(...)`
   resolves identically in dev and frozen. Force-includes `cryptography`
@@ -95,7 +95,7 @@ into the repo:
   `console=False`. Note: `.env` is **not** bundled — it is runtime config
   placed next to the EXE by the site administrator.
 - **`build.ps1`** — installs `requirements.txt` + PyInstaller, cleans
-  `build/`/`dist/`, runs the spec, and verifies `dist/DFX_Tester/DFX_Tester.exe`.
+  `build/`/`dist/`, runs the spec, and verifies `dist/EM5406_Tester/EM5406_Tester.exe`.
 
 **Onedir, not onefile**, on purpose: onefile self-extracts to `%TEMP%` on every
 launch and trips heuristic AV (e.g. Avast/AVG `IDP.HELU.*`).
@@ -104,7 +104,7 @@ At runtime, writable state (`database.db`, `logs/`, `results/`, `app.lock`) is
 created in a `data/` folder next to the EXE; bundled read-only assets resolve via
 `sys._MEIPASS`. See `src/paths.py`.
 
-> **Known spec defect (see audit):** `DFX_Tester.spec` lists `serial` under
+> **Known spec defect (see audit):** `EM5406_Tester.spec` lists `serial` under
 > `excludes` with the note "unused in current code", but
 > `connection_settings_form.py` imports `serial.tools.list_ports`. In a frozen
 > build, COM-port enumeration will silently fall back to the static port list.

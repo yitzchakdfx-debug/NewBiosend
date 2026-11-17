@@ -96,7 +96,7 @@ of ours to native code first (Cython, needs the MSVC Build Tools):
 
     venv\Scripts\python.exe -m pip install -r requirements-build.txt
     venv\Scripts\python.exe tools\build_protected.py
-    venv\Scripts\python.exe -m PyInstaller --noconfirm DFX_Tester_protected.spec
+    venv\Scripts\python.exe -m PyInstaller --noconfirm EM5406_Tester_protected.spec
 
 Behaviour is identical; test the compiled tree (`build/protected/run`) with the
 usual tests before packaging. Source in `src/` is never changed by this.
@@ -130,4 +130,4 @@ usual tests before packaging. Source in `src/` is never changed by this.
 - **Type hints on all public signatures.** Internal helpers may omit them
   if obvious.
 - **No new third-party dependencies** without explicit approval (see
-  `SPECIFICATIONS.md` -> Dependencies), and keep `DFX_Tester.spec` in sync.
+  `SPECIFICATIONS.md` -> Dependencies), and keep `EM5406_Tester.spec` in sync.

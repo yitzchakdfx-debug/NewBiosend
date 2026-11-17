@@ -3,7 +3,7 @@
 A normal PyInstaller build keeps our code as Python bytecode inside the EXE,
 which free tools can extract and decompile. This step turns every one of our
 modules into a compiled extension (.pyd), so the protected build
-(`DFX_Tester_protected.spec`) ships no bytecode of ours at all. The source in
+(`EM5406_Tester_protected.spec`) ships no bytecode of ours at all. The source in
 `src/` is not changed; everything happens in `build/protected/`.
 
 Output:
@@ -17,7 +17,7 @@ Output:
 Usage (from the repo root, needs Cython and the MSVC Build Tools):
     venv\\Scripts\\python.exe tools\\build_protected.py
 Then:
-    venv\\Scripts\\python.exe -m PyInstaller DFX_Tester_protected.spec
+    venv\\Scripts\\python.exe -m PyInstaller EM5406_Tester_protected.spec
 """
 
 from __future__ import annotations

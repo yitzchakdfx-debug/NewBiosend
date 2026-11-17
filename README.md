@@ -1,4 +1,4 @@
-# DFX Tester — Component ATE
+# EM-5406 Tester — Component ATE
 
 **Automated Test Equipment Framework for Component Validation**
 
@@ -8,7 +8,7 @@
 
 ## About the Project
 
-The **DFX Tester** is an advanced software framework for managing and executing automated tests on electronic components (ATE). The system supports dynamic script-based test sequences (`.tst` files), real-time hardware trace monitoring, professional engineering PDF reporting, and built-in role-based security.
+The **EM-5406 Tester** is an advanced software framework for managing and executing automated tests on electronic components (ATE). The system supports dynamic script-based test sequences (`.tst` files), real-time hardware trace monitoring, professional engineering PDF reporting, and built-in role-based security.
 
 > **Architecture Note:** This repository is the **Core Baseline Framework** — a generic, modular foundation. Custom versions and branches are derived from it to meet specific hardware requirements, communication protocols, and client demands.
 
@@ -60,7 +60,7 @@ To ensure operational safety on the production floor, the system uses strict Rol
 - **Serial Communication:** pyserial (optional, used for connection param enumeration)
 - **Security:** `hashlib`, `secrets`, `ctypes` (Windows PID locking)
 - **Styling:** Qt Style Sheets (QSS) — Dark and Light themes
-- **Packaging:** PyInstaller (`DFX_Tester.spec` + `build.ps1`)
+- **Packaging:** PyInstaller (`EM5406_Tester.spec` + `build.ps1`)
 
 ---
 
@@ -101,13 +101,13 @@ one is never changed. Two consequences:
 ## Configuring a Deployed Station
 
 A packaged build is a folder, not a lone `.exe`. `build.ps1` copies `.env` **next
-to** `DFX_Tester.exe`, and the app resolves it from there (`paths._install_root()`),
+to** `EM5406_Tester.exe`, and the app resolves it from there (`paths._install_root()`),
 so a deployed station stays configurable:
 
 ```
-dist\DFX_Tester\
+dist\EM5406_Tester\
 ├── .env                 <- editable config (shipped by build.ps1)
-├── DFX_Tester.exe
+├── EM5406_Tester.exe
 ├── _internal\           <- runtime; do not edit
 └── data\                <- created on first launch: DB, reports, logs
 ```
@@ -152,7 +152,7 @@ A PyInstaller spec and build script are included:
 .\build.ps1
 ```
 
-The output is the **folder** `dist/DFX_Tester/` (onedir, not a single file — onefile builds trip antivirus heuristics; see the comment in `build.ps1`). Ship the whole folder. Writable data (database, logs, reports) is stored next to the `.exe`; bundled read-only assets are unpacked to `sys._MEIPASS` at runtime. See **Configuring a Deployed Station** above for what an admin can change on an installed station.
+The output is the **folder** `dist/EM5406_Tester/` (onedir, not a single file — onefile builds trip antivirus heuristics; see the comment in `build.ps1`). Ship the whole folder. Writable data (database, logs, reports) is stored next to the `.exe`; bundled read-only assets are unpacked to `sys._MEIPASS` at runtime. See **Configuring a Deployed Station** above for what an admin can change on an installed station.
 
 ---
 
@@ -168,7 +168,7 @@ src/
   data/           — Test script files (.tst) and local database
   paths.py        — Path resolution for dev and frozen (PyInstaller) environments
   main.py         — Application entry point
-DFX_Tester.spec   — PyInstaller build spec
+EM5406_Tester.spec   — PyInstaller build spec
 build.ps1         — PowerShell build script
 ```
 

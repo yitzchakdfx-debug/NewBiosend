@@ -1,16 +1,16 @@
-# Build DFX_Tester with PyInstaller.
+# Build the EM-5406 Tester with PyInstaller.
 #
 # Usage (from repo root):
 #     .\build.ps1
 #
 # Produces:
-#     dist\DFX_Tester\DFX_Tester.exe   - launcher
-#     dist\DFX_Tester\_internal\...    - runtime (DLLs, pyd, bundled assets)
-#     dist\DFX_Tester\.env             - runtime config (copied in below)
+#     dist\EM5406_Tester\EM5406_Tester.exe   - launcher
+#     dist\EM5406_Tester\_internal\...    - runtime (DLLs, pyd, bundled assets)
+#     dist\EM5406_Tester\.env             - runtime config (copied in below)
 #     build\                           - PyInstaller intermediates (safe to delete)
 #
-# Ship the WHOLE dist\DFX_Tester folder (zip it). The user runs
-# DFX_Tester.exe inside the folder; on first launch the app creates a
+# Ship the WHOLE dist\EM5406_Tester folder (zip it). The user runs
+# EM5406_Tester.exe inside the folder; on first launch the app creates a
 # sibling 'data\' directory for the SQLite DB, PDF results, encrypted
 # logs, and the app.lock single-instance file.
 #
@@ -43,10 +43,10 @@ if (Test-Path dist)  { Remove-Item -Recurse -Force dist }
 
 # Build using the spec (do NOT pass --onefile/--windowed etc. - those
 # come from the spec).
-& $py -m PyInstaller --noconfirm --clean DFX_Tester.spec
+& $py -m PyInstaller --noconfirm --clean EM5406_Tester.spec
 
-$bundle = Join-Path $PSScriptRoot "dist\DFX_Tester"
-$exe    = Join-Path $bundle "DFX_Tester.exe"
+$bundle = Join-Path $PSScriptRoot "dist\EM5406_Tester"
+$exe    = Join-Path $bundle "EM5406_Tester.exe"
 if (-not (Test-Path $exe)) {
     throw "Build finished but $exe was not produced. Check the PyInstaller output above."
 }
@@ -68,5 +68,5 @@ Write-Host ""
 Write-Host "Done. Bundle folder: $bundle  ($bundleSizeMB MB total)"
 Write-Host "Launcher: $exe"
 Write-Host ""
-Write-Host "To deploy on another machine: zip the dist\DFX_Tester folder, copy it over, unzip anywhere, double-click DFX_Tester.exe."
+Write-Host "To deploy on another machine: zip the dist\EM5406_Tester folder, copy it over, unzip anywhere, double-click EM5406_Tester.exe."
 Write-Host "On first launch the app creates a sibling 'data\' folder for the database and reports."

@@ -366,7 +366,7 @@ def start_service() -> bool:
     if service_running():
         return False
     if is_frozen():
-        exe = Path(sys.executable).resolve().parent / "DFX_XmlTransfer.exe"
+        exe = Path(sys.executable).resolve().parent / "EM5406_XmlTransfer.exe"
         if not exe.is_file():
             return False
         command = [str(exe)]

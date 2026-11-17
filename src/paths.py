@@ -6,7 +6,7 @@ Two roots are exposed:
   When frozen with PyInstaller, these live under ``sys._MEIPASS``.
 * :func:`user_data_path` — writable per-installation files (database, encrypted
   logs, generated reports, app.lock). When frozen, these live next to the
-  ``DFX_Tester.exe`` so they persist across launches.
+  ``EM5406_Tester.exe`` so they persist across launches.
 
 In dev mode both roots resolve to ``<repo>/src``, preserving the previous layout.
 """

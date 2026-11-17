@@ -1,6 +1,6 @@
-"""DFX XML Transfer service: sends finished XML reports to the MES folder.
+"""EM-5406 XML Transfer service: sends finished XML reports to the MES folder.
 
-Runs as its own windowless program (`DFX_XmlTransfer.exe`), separate from the
+Runs as its own windowless program (`EM5406_XmlTransfer.exe`), separate from the
 GUI, so reports keep moving when the GUI is closed and after a restart. Windows
 starts it at logon (Task Scheduler, see `install_xml_service_task.cmd`); the GUI
 also starts it if it finds it is not running.
