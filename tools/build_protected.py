@@ -8,8 +8,8 @@ modules into a compiled extension (.pyd), so the protected build
 
 Output:
     build/protected/py/   sources as built: main.py and xml_service.py become
-                          3-line stubs, their code moves to dfx_main.py and
-                          dfx_xml_service.py (so it is compiled too)
+                          3-line stubs, their code moves to app_main.py and
+                          app_xml_service.py (so it is compiled too)
     build/protected/pyd/  the compiled .pyd files, same package layout
     build/protected/run/  a runnable tree (stubs, __init__.py, .pyd, assets,
                           data) used to test the compiled code before packaging
@@ -38,16 +38,16 @@ _IGNORE = shutil.ignore_patterns(
     "*.bak*", "BENCH_ONLY_*", "*.pyc",
 )
 
-MAIN_STUB = '''"""Entry point of the protected build; the application is in dfx_main (compiled)."""
-from dfx_main import _exit_now, main
+MAIN_STUB = '''"""Entry point of the protected build; the application is in app_main (compiled)."""
+from app_main import _exit_now, main
 
 _exit_now(main())
 '''
 
-SERVICE_STUB = '''"""Entry point of the protected build; the service is in dfx_xml_service (compiled)."""
+SERVICE_STUB = '''"""Entry point of the protected build; the service is in app_xml_service (compiled)."""
 import sys
 
-from dfx_xml_service import main
+from app_xml_service import main
 
 sys.exit(main())
 '''
@@ -67,8 +67,8 @@ def prepare_sources() -> None:
     if OUT.exists():
         shutil.rmtree(OUT)
     shutil.copytree(SRC, PY, ignore=_IGNORE)
-    (PY / "main.py").rename(PY / "dfx_main.py")
-    (PY / "xml_service.py").rename(PY / "dfx_xml_service.py")
+    (PY / "main.py").rename(PY / "app_main.py")
+    (PY / "xml_service.py").rename(PY / "app_xml_service.py")
     (PY / "main.py").write_text(MAIN_STUB, encoding="utf-8")
     (PY / "xml_service.py").write_text(SERVICE_STUB, encoding="utf-8")
 
