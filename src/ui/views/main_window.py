@@ -53,7 +53,7 @@ from logic.report_templates import read_pdf_template
 from logic.test_groups import TestGroup, always_step_names, build_test_groups
 from ui.report_worker import ReportWorker
 from logic.models import ScriptDocument, TestResultPayload
-from logic.report_generator import HIDDEN_LIMIT_TEXT, ReportGenerator, limits_hidden, sanitize_path_segment
+from logic.report_generator import HIDDEN_LIMIT_TEXT, limits_hidden, sanitize_path_segment
 from logic.roles import Capability, can
 from logic.script_manager import ScriptManager, ScriptParseError
 from logic.secure_logger import get_secure_logger
@@ -161,8 +161,6 @@ class MainWindow(QMainWindow):
             self._secure = get_secure_logger()
         except Exception:
             self._secure = None
-        self._last_run_meta: dict | None = None
-        self._last_run_rows: list[dict] = []
         # One entry per in-flight report. A list rather than a single slot so a
         # parallel run's workers cannot overwrite each other's reference.
         self._report_workers: list[ReportWorker] = []
@@ -259,13 +257,6 @@ class MainWindow(QMainWindow):
 
         results_menu = menu.addMenu("&Results")
         results_menu.addAction("Open Results &Folder", self.open_results_folder)
-        results_menu.addSeparator()
-        self._act_export_csv = results_menu.addAction(
-            "Export to &CSV...", self.export_results_csv
-        )
-        self._act_export_pdf = results_menu.addAction(
-            "Export to &PDF...", self.export_results_pdf
-        )
         if self._can(Capability.VIEW_XML_TRANSFERS):
             results_menu.addSeparator()
             results_menu.addAction("XML &Transfer...", self.open_xml_transfer_dialog)
@@ -323,14 +314,6 @@ class MainWindow(QMainWindow):
         list_actions_visible = self._can(Capability.SELECT_STEPS)
         self.btn_select_all_tests.setVisible(list_actions_visible)
         self.btn_clear_all_tests.setVisible(list_actions_visible)
-
-        may_report = self._can(Capability.GENERATE_REPORTS)
-        for action in (self._act_export_csv, self._act_export_pdf):
-            action.setEnabled(may_report)
-        if not may_report:
-            tip = "Reports are not generated in Maintenance mode."
-            self._act_export_csv.setToolTip(tip)
-            self._act_export_pdf.setToolTip(tip)
 
     def open_version_manager(self) -> None:
         if not self._can(Capability.MANAGE_VERSIONS):
@@ -512,94 +495,6 @@ class MainWindow(QMainWindow):
     def open_results_folder(self) -> None:
         folder = self._ensure_results_dir()
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder.resolve())))
-
-    def _require_report_capability(self) -> bool:
-        """Guard manual exports; shows why when the role may not produce reports."""
-        if self._can(Capability.GENERATE_REPORTS):
-            return True
-        QMessageBox.warning(
-            self,
-            "Not allowed",
-            "Test reports are not generated in Maintenance mode.",
-        )
-        return False
-
-    def export_results_csv(self) -> None:
-        if not self._require_report_capability():
-            return
-        if self._last_run_meta is None:
-            QMessageBox.information(
-                self,
-                "Export",
-                "No completed test results are cached. Run a test sequence first.",
-            )
-            return
-        
-        rg = ReportGenerator()
-        archive_dir, stem = rg._resolved_archive_paths(self._last_run_meta)
-        archive_dir.mkdir(parents=True, exist_ok=True)  # may not exist when "Save as log" is off
-        role_key = self._current_role().replace(" ", "_")
-        suggested = archive_dir / f"{stem}_{role_key}.csv"
-        
-        selected, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export results as CSV",
-            str(suggested),
-            "CSV Files (*.csv)",
-        )
-        if not selected:
-            return
-        path = Path(selected)
-        if path.suffix.lower() != ".csv":
-            path = path.with_suffix(".csv")
-        try:
-            rg.generate_csv_file(
-                path,
-                self._last_run_meta,
-                self._last_run_rows,
-                self._current_role(),
-            )
-            QMessageBox.information(self, "Export", f"Saved:\n{path}")
-        except Exception as exc:
-            QMessageBox.warning(self, "Export failed", str(exc))
-
-    def export_results_pdf(self) -> None:
-        if not self._require_report_capability():
-            return
-        if self._last_run_meta is None:
-            QMessageBox.information(
-                self,
-                "Export",
-                "No completed test results are cached. Run a test sequence first.",
-            )
-            return
-        
-        rg = ReportGenerator()
-        archive_dir, stem = rg._resolved_archive_paths(self._last_run_meta)
-        archive_dir.mkdir(parents=True, exist_ok=True)  # may not exist when "Save as log" is off
-        suggested = archive_dir / f"{stem}.pdf"
-        
-        selected, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export results as PDF",
-            str(suggested),
-            "PDF Files (*.pdf)",
-        )
-        if not selected:
-            return
-        path = Path(selected)
-        if path.suffix.lower() != ".pdf":
-            path = path.with_suffix(".pdf")
-        try:
-            rg.generate_pdf_file(
-                path,
-                self._last_run_meta,
-                self._last_run_rows,
-                self._current_role(),
-            )
-            QMessageBox.information(self, "Export", f"Saved:\n{path}")
-        except Exception as exc:
-            QMessageBox.warning(self, "Export failed", str(exc))
 
     def _make_log_button(
         self,
@@ -1053,21 +948,15 @@ class MainWindow(QMainWindow):
             # failed to load, Stop before the first unit). There is nothing to
             # report; archiving here produced empty PDFs under unknown/unknown/
             # plus a spurious "XML not generated" modal.
-            self._last_run_meta = None
-            self._last_run_rows = []
             self.append_trace("No unit was tested - no report generated.")
             return
         if reports[-1].aborted_by_operator:
-            self._last_run_meta = None
-            self._last_run_rows = []
             self.append_trace(
                 f"{reports[-1].unit.serial_number}: stopped by operator - "
                 "no report saved."
             )
             return
         if reports[-1].aborted_link_lost:
-            self._last_run_meta = None
-            self._last_run_rows = []
             self.append_trace(
                 f"{reports[-1].unit.serial_number}: communication with the load "
                 "was lost - no report saved."
@@ -1077,15 +966,11 @@ class MainWindow(QMainWindow):
             # Run Step: one test out of sequence on unit "MAINT" for diagnostics.
             # Its dialog promises no report, and a partial "MAINT" PDF/XML in
             # the archive and the CAMSTAR folder would look like a unit record.
-            self._last_run_meta = None
-            self._last_run_rows = []
             self.append_trace("Single-test run - results on screen only, no report generated.")
             return
         meta, rows = th.report_snapshot()
         logical_name = f"{self._catalog_test_name} {getattr(self, '_catalog_version', '')}".strip()
         meta["test_program_name"] = logical_name
-        self._last_run_meta = meta
-        self._last_run_rows = list(rows)
         # Spec Rev.1.1 §1.1.4.3: no test reports in Maintenance mode. The
         # on-screen results above are still populated — only the persisted
         # artifacts are suppressed, so bench troubleshooting cannot produce a

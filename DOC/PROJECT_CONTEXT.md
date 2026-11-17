@@ -371,6 +371,10 @@ now "Select Test" (ribbon, File menu, the selection dialog "Test Selection",
 "Test Version Manager"); the report field "Product Name" (Appendix A/B) is
 unchanged.
 
+Results > "Export to CSV" / "Export to PDF" were removed (2026-11-17): they
+only re-saved the last run's report, and every unit already gets its PDF and
+XML automatically. `ReportGenerator.generate_csv_file` remains, unused by the UI.
+
 ## No silent demo-mode fallback
 
 A failed `connect()` used to swap the driver for `MockHardware` and carry on.
