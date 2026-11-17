@@ -92,7 +92,7 @@ class VersionManagerDialog(QDialog):
         #: Ids deleted in this dialog; the main window moves off its active
         #: version if it is among them.
         self.deleted_ids: set[int] = set()
-        self.setWindowTitle("Product Version Manager")
+        self.setWindowTitle("Test Version Manager")
         self.resize(920, 480)
 
         root = QVBoxLayout(self)
@@ -100,7 +100,7 @@ class VersionManagerDialog(QDialog):
 
         self._table = QTableWidget(0, 4)
         self._table.setHorizontalHeaderLabels(
-            ["Product Name", "UUT Type", "Version", "Date"]
+            ["Test Name", "UUT Type", "Version", "Date"]
         )
         self._table.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows

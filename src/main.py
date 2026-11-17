@@ -18,6 +18,7 @@ if str(_SRC) not in sys.path:
 
 from logic.file_lock import AlreadyRunningError, SingleInstanceLock
 from paths import ensure_user_data_seeded, resource_path, user_data_path, user_tmp_path
+from version import APP_TITLE
 
 # NOT imported here: anything that reaches `config`, which validates `.env` at
 # import time and raises on a bad value (e.g. HARDWARE_BACKEND=simulatorr). At
@@ -82,7 +83,7 @@ def main() -> int:
     try:
         lock.acquire()
     except AlreadyRunningError as exc:
-        QMessageBox.critical(None, "DFX Tester", str(exc))
+        QMessageBox.critical(None, APP_TITLE, str(exc))
         return 1
     try:
         return _run(app)
@@ -115,12 +116,12 @@ def _run(app: QApplication) -> int:
     except Exception as exc:
         QMessageBox.critical(
             None,
-            "DFX Tester - configuration error",
+            f"{APP_TITLE} - configuration error",
             f"The application cannot start:\n\n{exc}",
         )
         return 1
 
-    icon_path = resource_path("ui", "assets", "icons", "DFXAppIcon.png")
+    icon_path = resource_path("ui", "assets", "icons", "AppIcon.png")
     if icon_path.is_file():
         app.setWindowIcon(QIcon(str(icon_path)))
     else:

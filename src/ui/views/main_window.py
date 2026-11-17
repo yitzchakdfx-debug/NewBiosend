@@ -78,7 +78,8 @@ from ui.views.mes_dialogs import MesAccessProbe, MesWarningDialog
 from logic import report_paths
 from ui.widgets.result_row_delegate import ResultRowDelegate
 from ui.widgets.wrap_item_delegate import WrapItemDelegate
-from version import __version__
+from ui.views.about_dialog import AboutDialog
+from version import APP_TITLE, __version__
 
 
 # The spec Rev.1.1 sequence (§1.1.6-§1.1.7): CR mode, 5.76 ohm / 2.0 ohm, load
@@ -122,8 +123,8 @@ class MainWindow(QMainWindow):
     def __init__(self, user_info: dict) -> None:
         super().__init__()
         self._user_info = user_info
-        self.setWindowTitle("DFX Tester - EM-5406 Power Supply Load Test")
-        icon_path = self._ICONS_DIR / "DFXAppIcon.png"
+        self.setWindowTitle(APP_TITLE)
+        icon_path = self._ICONS_DIR / "AppIcon.png"
         if icon_path.is_file():
             self.setWindowIcon(QIcon(str(icon_path)))
         self.resize(1200, 800)
@@ -187,7 +188,7 @@ class MainWindow(QMainWindow):
         self._apply_theme_file()
         self._update_icons(self.is_dark_mode)
         self._apply_role_permissions()
-        # Every role starts on the newest catalog version; Select Product opens
+        # Every role starts on the newest catalog version; Select Test opens
         # by itself only when there is none to start on.
         started_on_latest = self._load_latest_version()
         if started_on_latest:
@@ -196,7 +197,7 @@ class MainWindow(QMainWindow):
             # Roles that cannot pick individual steps start with no script at
             # all and must choose a product first.
             self._active_script_path = Path()
-            self.label_active_script.setText("No test - use Select Product.")
+            self.label_active_script.setText("No test - use Select Test.")
             self.test_list.clear()
             self._catalog_test_name = ""
             self._catalog_uut_type = ""
@@ -240,19 +241,13 @@ class MainWindow(QMainWindow):
         self.btn_exit.setIcon(self._icon("power", SP.SP_DialogCloseButton))
 
     def show_about_dialog(self) -> None:
-        QMessageBox.about(
-            self,
-            "About DFX Tester",
-            "<b>DFX Tester - EM-5406 Power Supply Load Test</b><br>"
-            f"Version {__version__}<br><br>"
-            "Electronic load: Prodigit 3300G / 3316G (CR mode).",
-        )
+        AboutDialog(self._ICONS_DIR, __version__, self).exec()
 
     def _setup_menu_bar(self) -> None:
         menu = self.menuBar()
 
         file_menu = menu.addMenu("&File")
-        file_menu.addAction("&Select Product...", self.load_script)
+        file_menu.addAction("&Select Test...", self.load_script)
         file_menu.addSeparator()
         file_menu.addAction("E&xit", self.close)
 
@@ -316,7 +311,7 @@ class MainWindow(QMainWindow):
         self.btn_limits.setVisible(self._can(Capability.EDIT_LIMITS))
         self.btn_run_step.setVisible(self._can(Capability.RUN_SINGLE_STEP))
 
-        self.btn_load_script.setText("Product")
+        self.btn_load_script.setText("Select Test")
 
         # Live readings are for every role; the message log stays diagnostic.
         self.bottom_tabs.setTabVisible(
@@ -374,8 +369,8 @@ class MainWindow(QMainWindow):
         ):
             text = f"The active test {old} was deleted - now on {rec['test_name']} {rec['version_name']}."
         else:
-            self._clear_active_test("No test - use Select Product.")
-            text = f"The active test {old} was deleted - choose a test with Select Product."
+            self._clear_active_test("No test - use Select Test.")
+            text = f"The active test {old} was deleted - choose a test with Select Test."
         self.append_trace(text)
         QMessageBox.information(self, "Versions", text)
 
@@ -631,7 +626,7 @@ class MainWindow(QMainWindow):
         )
         if not selected:
             return
-        meta = self._export_metadata("DFX Tester - Trace Log")
+        meta = self._export_metadata(f"{APP_TITLE} - Trace Log")
         payload = self._format_text_header(meta) + "\n" + self.trace_log.toPlainText()
         Path(selected).write_text(payload, encoding="utf-8")
 
@@ -656,7 +651,7 @@ class MainWindow(QMainWindow):
             ribbon.addWidget(self.btn_toggle_theme)
 
         self.btn_load_script = self._make_ribbon_button(
-            "btn_load_script", "Select Product"
+            "btn_load_script", "Select Test"
         )
         self.btn_load_script.clicked.connect(self.load_script)
         ribbon.addWidget(self.btn_load_script)
@@ -721,8 +716,8 @@ class MainWindow(QMainWindow):
 
         ribbon.addStretch()
 
-        # The customer's logo, ahead of ours. Both logos shrink (keeping their
-        # proportions) when the screen is narrow, instead of widening the window.
+        # The customer's logo. It shrinks (keeping its proportions) when the
+        # screen is narrow, instead of widening the window.
         customer_logo = self._ICONS_DIR / "JJMedTechLogo.svg"
         self.lbl_customer_logo = ScaledLogo(
             QIcon(str(customer_logo)).pixmap(QSize(440, 88)) if customer_logo.is_file() else QPixmap(),
@@ -733,15 +728,7 @@ class MainWindow(QMainWindow):
         ribbon.addWidget(self.lbl_customer_logo, 0, Qt.AlignmentFlag.AlignVCenter)
         ribbon.addSpacing(10)
 
-        bird_path = self._ICONS_DIR / "DFXLogo.png"
-        self.lbl_brand_icon = ScaledLogo(
-            QPixmap(str(bird_path)) if bird_path.is_file() else QPixmap(),
-            QSize(220, 64), min_width=100,
-        )
-        self.lbl_brand_icon.setObjectName("brand_icon")
-        self.lbl_brand_icon.setToolTip("DFX Tester")
-        ribbon.addWidget(self.lbl_brand_icon, 0, Qt.AlignmentFlag.AlignVCenter)
-        ribbon.addSpacing(12)
+        ribbon.addSpacing(2)
 
         self.btn_logout = self._make_ribbon_button("btn_logout", "Log Out")
         self.btn_logout.clicked.connect(self.logout)
@@ -1156,7 +1143,7 @@ class MainWindow(QMainWindow):
         if self._run_active():
             # The run is using the active script, and its report takes the
             # test name and version from it.
-            QMessageBox.information(self, "Select Product", "Stop the test before selecting another product.")
+            QMessageBox.information(self, "Select Test", "Stop the test before selecting another test.")
             return
         dlg = SelectTestDialog(parent=self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -1248,7 +1235,7 @@ class MainWindow(QMainWindow):
 
         False if there is none usable. Quiet: at startup the window is not
         shown yet, so a parse error is logged rather than popped up, and the old
-        start (Select Product) runs. A last test that was deleted, or no longer
+        start (Select Test) runs. A last test that was deleted, or no longer
         loads, falls back to the newest version.
         """
         rec = None
@@ -1278,7 +1265,7 @@ class MainWindow(QMainWindow):
             return True
         self.append_trace(
             f"Latest catalog version {rec['test_name']} {rec['version_name']} could not be "
-            "loaded - choose a test with Select Product."
+            "loaded - choose a test with Select Test."
         )
         self._cleanup_operator_temp()
         self._active_script_path = self._script_manager.scripts_dir / _DEFAULT_SCRIPT_NAME

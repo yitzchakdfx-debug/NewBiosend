@@ -31,7 +31,7 @@ class SelectTestDialog(QDialog):
         self._temp_path: Path | None = None
         self._selected_row: dict | None = None
 
-        self.setWindowTitle("Product Selection")
+        self.setWindowTitle("Test Selection")
         self.resize(900, 420)
 
         root = QVBoxLayout(self)
@@ -85,7 +85,7 @@ class SelectTestDialog(QDialog):
     def _accept_row(self) -> None:
         cr = self._table.currentRow()
         if cr < 0:
-            QMessageBox.information(self, "Product Selection", "Select a row first.")
+            QMessageBox.information(self, "Test Selection", "Select a row first.")
             return
         item0 = self._table.item(cr, 0)
         if item0 is None:
@@ -95,16 +95,16 @@ class SelectTestDialog(QDialog):
             return
         rec = self._db.get_test_version(int(vid))
         if rec is None:
-            QMessageBox.warning(self, "Product Selection", "Version was removed.")
+            QMessageBox.warning(self, "Test Selection", "Version was removed.")
             self._populate()
             return
         try:
             tmp_dir = user_tmp_path()
             tmp_dir.mkdir(parents=True, exist_ok=True)
-            self._temp_path = tmp_dir / f"dfx_op_{uuid.uuid4().hex}.tst"
+            self._temp_path = tmp_dir / f"test_op_{uuid.uuid4().hex}.tst"
             self._temp_path.write_text(rec["test_content"], encoding="utf-8")
         except OSError as exc:
-            QMessageBox.critical(self, "Product Selection", f"Could not create temp file:\n{exc}")
+            QMessageBox.critical(self, "Test Selection", f"Could not create temp file:\n{exc}")
             return
         self._selected_row = {
             "id": rec["id"],

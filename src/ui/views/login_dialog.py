@@ -19,6 +19,7 @@ from logic.auth_manager import AuthManager
 from logic.database_manager import DatabaseManager
 from paths import resource_path
 from ui.ui_helpers import attach_password_visibility_toggle
+from version import APP_TITLE
 
 
 class LoginDialog(QDialog):
@@ -27,7 +28,7 @@ class LoginDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
 
-        self.setWindowTitle("DFX ATE Login")
+        self.setWindowTitle(APP_TITLE)
         self.setObjectName("login_dialog")
 
         # Size similar to the mockup
@@ -67,10 +68,16 @@ class LoginDialog(QDialog):
             card_layout.addSpacing(8)
 
         # Title
-        title = QLabel("DFX ATE Login")
-        title.setObjectName("login_title")
+        title = QLabel(APP_TITLE)
+        title.setObjectName("login_product")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setWordWrap(True)
         card_layout.addWidget(title)
+
+        subtitle = QLabel("Login")
+        subtitle.setObjectName("login_title")
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        card_layout.addWidget(subtitle)
 
         card_layout.addSpacing(20)
 

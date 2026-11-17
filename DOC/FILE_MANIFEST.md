@@ -18,7 +18,7 @@ materially changed.
 | `src/env.py`             | config | **(NEW)** `.env` loader (`load_env_once()`) + typed getters (`get_str`, `get_bool`, `get_list`). Loads once at import. `python-dotenv` is a required dependency: if it is missing, `.env` is never read and `get_required_str()` raises an error naming the missing package and the running interpreter. |
 | `src/config.py`          | config | Feature flags (`SHOW_SEARCH_BAR`, `SHOW_NIGHT_MODE`), `UUT_TYPES` list, secrets, and station identity — all sourced from the environment via `env.py`. Zero hardcoded secrets. |
 | `src/paths.py`           | config | Dev/frozen path resolution. `resource_path()` for bundled read-only files, `user_data_path()` for writable state, `user_tmp_path()` for scratch files swept on startup, `ensure_user_data_seeded()` to copy seed `.tst`/`limits.json` next to the EXE. |
-| `src/version.py`         | config | Single source of truth for `__version__`; reads `APP_VERSION` from `.env` (default `"0.1.0-Beta"`). |
+| `src/version.py`         | config | Single source of truth for `__version__` (reads `APP_VERSION` from `.env`, default `"0.1.0-Beta"`) and `APP_TITLE` = "EM-5406 Power Supply Load Tester", the product name in window titles, the login screen, About and message boxes. |
 
 ## `src/logic/` — Qt-free business logic (plus the two sanctioned QThreads)
 
@@ -79,6 +79,7 @@ materially changed.
 | `src/ui/views/report_templates_dialog.py` | **(NEW)** `ReportTemplatesDialog`; Admin-only tabbed editor for the XML and PDF report templates. Validates both tabs before writing either, offers per-tab Check and Restore Default, and audit-logs the change. The XML tab carries a red MES/CAMSTAR warning, and saving a changed XML template or `test_sections` order asks for confirmation (default Cancel), since the XML layout is the agreed MES interface. |
 | ~~`src/ui/views/main_window.ui`~~      | **DELETED (2026-06-07)** — was STALE/UNUSED. Qt Designer file; UI is built entirely in Python; `loadUi`/`QUiLoader` appeared nowhere. |
 | `src/ui/views/login_dialog.py`         | **(CHANGED)** `LoginDialog`; authenticates via `AuthManager`, writes a "User Logged In" audit row. Loads `style.qss` directly. Shows the customer's logo (`JJMedTechLogo.svg`) above the title. No password-change flow. |
+| `src/ui/views/about_dialog.py`         | **(NEW 2026-11-17)** `AboutDialog` (Help > About): supplier logo (`ShanyTechLogo.svg/.png` if present), the small `about_badge.png`, product name, version, load model. Replaces `QMessageBox.about`. |
 | `src/ui/views/pre_test_dialog.py`      | **(NEW)** `PreTestDialog`; collects UUT type / serial / tester name before a run.                                                          |
 | `src/ui/views/select_test_dialog.py`   | **(NEW)** `SelectTestDialog`; pick a version from the DB catalog; writes its content to a temp `.tst` for execution.                       |
 | ~~`src/ui/views/sequence_editor_dialog.py`~~ | **DELETED** — retired; step reorder/add/remove now lives only in the raw `.tst` editor + Version Manager import. |
@@ -99,7 +100,7 @@ materially changed.
 | `src/ui/assets/light_theme.qss`        | Light QSS theme (applied at the `QMainWindow` root).                                                                                       |
 | `src/ui/assets/dark_theme.qss`         | Dark QSS theme (applied at the `QMainWindow` root).                                                                                        |
 | `src/ui/assets/style.qss`              | **(CHANGED)** Login-screen stylesheet. Contrary to the previous manifest, it **is** loaded — by `LoginDialog`.                            |
-| `src/ui/assets/icons/`                 | App icon, brand logo, and theme/ribbon SVG/PNG icons (`BirdAppIcon.png`, `BirdLogo.png`, `moon.svg`, `sun.svg`, `logout.svg`, `power.svg`, …). `JJMedTechLogo.svg` is the customer's logo (main window top bar, login); `JJMedTechLogo.png` is the same logo rendered for the PDF (ReportLab cannot draw SVG). |
+| `src/ui/assets/icons/`                 | App icon (`AppIcon.png`, `AppIcon.ico` for the EXEs; a neutral lightning badge, no company name), the Help > About images (`about_badge.png`; `ShanyTechLogo.png/.svg`, the supplier logo, shown above it when present), and theme/ribbon SVG/PNG icons (`moon.svg`, `sun.svg`, `logout.svg`, `power.svg`, …). (2026-11-17) `JJMedTechLogo.svg` is the customer's logo (main window top bar, login); `JJMedTechLogo.png` is the same logo rendered for the PDF (ReportLab cannot draw SVG). |
 
 ## `src/data/` — seed config & writable state
 

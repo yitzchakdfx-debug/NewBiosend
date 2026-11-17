@@ -360,6 +360,17 @@ that it clears on its own within a couple of minutes. The bare code cost three
 debugging rounds. A second copy of the app is prevented by
 `SingleInstanceLock` (Windows named mutex, `logic/file_lock.py`).
 
+## Product name and branding (2026-11-17)
+
+The program carries no DFX name: window title, login screen ("EM-5406 Power
+Supply Load Tester" above "Login"), message boxes and the trace-log export all
+use `version.APP_TITLE`. The toolbar shows only the customer's logo. The app
+icon is a neutral badge (`AppIcon.png/.ico`). Help > About (`AboutDialog`) shows
+the supplier's logo, then the former app badge, smaller. "Product" in the UI is
+now "Select Test" (ribbon, File menu, the selection dialog "Test Selection",
+"Test Version Manager"); the report field "Product Name" (Appendix A/B) is
+unchanged.
+
 ## No silent demo-mode fallback
 
 A failed `connect()` used to swap the driver for `MockHardware` and carry on.
@@ -617,7 +628,7 @@ shows `TestRunnerThread.connect_error`).
 - *PDF and XML independent.* `ReportWorker` attempts the XML even when the
   PDF fails; a logo is decoded when the PDF is built (`lazy=0`), so a bad
   logo is skipped instead of failing every report at `doc.build`.
-- *No overlapping runs, no Pause.* Select Product, Start and Run Step refuse
+- *No overlapping runs, no Pause.* Select Test, Start and Run Step refuse
   while any run is active (`_run_active`, which also covers parallel runs).
   Pause was removed: it left the load ON with no voltage monitoring, so a
   unit could pass a burn-in it did not hold. Start is disabled during a run.

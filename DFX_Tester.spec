@@ -195,7 +195,7 @@ exe = EXE(
     upx=False,  # off on purpose: UPX-packed bins trip AV heuristics (e.g. IDP.HELU.*)
     console=False,
     disable_windowed_traceback=False,
-    icon=str(SRC / "ui" / "assets" / "icons" / "DFXAppIcon.png"),
+    icon=str(SRC / "ui" / "assets" / "icons" / "AppIcon.ico"),
 )
 
 # The XML transfer service (customer POD): a second, windowless program in the
@@ -229,7 +229,7 @@ svc_exe = EXE(
     upx=False,
     console=False,
     disable_windowed_traceback=False,
-    icon=str(SRC / "ui" / "assets" / "icons" / "DFXAppIcon.png"),
+    icon=str(SRC / "ui" / "assets" / "icons" / "AppIcon.ico"),
 )
 
 coll = COLLECT(

@@ -1,5 +1,5 @@
 /* ========================================================
-   DFX ATE - Navy Mint Login Screen
+   EM-5406 Tester - Navy Mint Login Screen
    ======================================================== */
 
 QDialog#login_dialog {
@@ -19,9 +19,17 @@ QFrame#login_card {
 }
 
 /* Main title */
+/* Product name above the Login title */
+QLabel#login_product {
+    color: #102A43;
+    font-size: 13pt;
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-weight: 700;
+}
+
 QLabel#login_title {
     color: #102A43;
-    font-size: 24pt;
+    font-size: 20pt;
     font-family: "Segoe UI", Arial, sans-serif;
     font-weight: 800;
 }
