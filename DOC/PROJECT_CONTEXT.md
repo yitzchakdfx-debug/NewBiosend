@@ -711,10 +711,18 @@ venv had only PyVISA + PyVISA-py, so a USB cable could not be used at all. Added
 `pyserial` (a USB link that shows up as a COM port, `ASRL<n>::INSTR`; Connections
 also accepts `COM<n>`) and `pyusb` + `libusb-package` (USBTMC, `USB0::...::INSTR`),
 in `requirements.txt` and the PyInstaller spec (with the libusb DLL). Which kind
-the 3300G presents is still unknown. A COM link gets `PRODIGIT_SERIAL_BAUD` (8N1;
-9600 is a guess — match the front panel); `PRODIGIT_CONNECT_CMD` (e.g. `REMOTE`,
-which the 3300G manual asks for over USB/LAN) is written after each connect if
-set. The reconnect, fast-Stop, load-off and no-report-on-lost-link logic is
+the 3300G presents is still unknown. Its manual (Appendix B) describes the USB
+option as a USB-to-serial port (Prolific PL2303TA, COMx) at 115200 baud with
+hardware flow control, and asks for `REMOTE`. Defaults since 2026-11-17: a COM
+link gets `PRODIGIT_SERIAL_BAUD` 115200, 8N1, `PRODIGIT_SERIAL_FLOW` rtscts,
+`PRODIGIT_SERIAL_CONNECT_CMD` (`REMOTE`) after connecting and
+`PRODIGIT_SERIAL_RELEASE_CMD` (`LOCAL`, after LOAD OFF) before closing, so the
+front panel is handed back. `PRODIGIT_CONNECT_CMD`, if set, is sent on any link
+instead. LAN is unchanged (nothing sent). With the address empty, discovery
+finds the COM port that answers `*IDN?` as a Prodigit (other COM devices get
+only `*IDN?`), so a USB station needs no address at all. Windows 11 drivers
+refuse the PL2303TA ("does not support Windows 11"); USB is a Windows 10 option,
+LAN the supported link. No driver is shipped. The reconnect, fast-Stop, load-off and no-report-on-lost-link logic is
 transport-independent; the LAN-only parts (TCP probe, stale-session kick) are
 skipped for USB, and the LED instead checks that the resource is present in the
 VISA list (nothing is opened), so loads-off-on-return also works over USB. A

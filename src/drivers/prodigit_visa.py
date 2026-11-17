@@ -46,6 +46,9 @@ from config import (
     PRODIGIT_VISA_WRITE_TERM,
     PRODIGIT_SERIAL_BAUD,
     PRODIGIT_CONNECT_CMD,
+    PRODIGIT_SERIAL_CONNECT_CMD,
+    PRODIGIT_SERIAL_FLOW,
+    PRODIGIT_SERIAL_RELEASE_CMD,
 )
 from drivers import link_recovery
 from drivers.base_driver import BaseDriver, HardwareError, UnknownCommandError
@@ -151,14 +154,43 @@ def _is_serial(resource_name: str) -> bool:
 
 
 def _configure_serial(resource: Any, resource_name: str) -> None:
-    """Line settings for a COM-port link (`PRODIGIT_SERIAL_BAUD`, 8N1). Best-effort."""
+    """Line settings for a COM-port link: `PRODIGIT_SERIAL_BAUD`, 8N1 and
+    `PRODIGIT_SERIAL_FLOW` (the 3300G manual: USB at 115200, hardware flow
+    control). Best-effort: a setting the backend refuses is left as it is."""
     if not _is_serial(resource_name):
         return
     try:
-        resource.baud_rate = int(_parse_float(PRODIGIT_SERIAL_BAUD, 9600))
+        resource.baud_rate = int(_parse_float(PRODIGIT_SERIAL_BAUD, 115200))
         resource.data_bits = 8
     except Exception:
         pass
+    flow = _serial_flow_constant(PRODIGIT_SERIAL_FLOW)
+    if flow is not None:
+        try:
+            resource.flow_control = flow
+        except Exception:
+            pass
+
+
+def _serial_flow_constant(name: str) -> int | None:
+    """VISA flow-control constant for "rtscts" / "xonxoff" / "none"; None if unknown."""
+    try:
+        from pyvisa import constants
+    except ImportError:
+        return None
+    return {
+        "rtscts": constants.VI_ASRL_FLOW_RTS_CTS,
+        "xonxoff": constants.VI_ASRL_FLOW_XON_XOFF,
+        "none": constants.VI_ASRL_FLOW_NONE,
+    }.get(name.strip().lower())
+
+
+def _connect_command(resource_name: str) -> str:
+    """Command written once after connecting: `PRODIGIT_CONNECT_CMD` on any link,
+    else `PRODIGIT_SERIAL_CONNECT_CMD` on a COM-port (USB) link."""
+    if PRODIGIT_CONNECT_CMD.strip():
+        return PRODIGIT_CONNECT_CMD.strip()
+    return PRODIGIT_SERIAL_CONNECT_CMD.strip() if _is_serial(resource_name) else ""
 
 
 def _raw_socket(resource: Any) -> Any:
@@ -350,9 +382,10 @@ class ProdigitVisaDriver(BaseDriver):
             raise HardwareError(_connect_error_message(exc)) from exc
 
         self._link_down = False
-        if PRODIGIT_CONNECT_CMD.strip():
+        connect_cmd = _connect_command(self._ctx.resource_name)
+        if connect_cmd:
             try:
-                self._ctx.resource.write(PRODIGIT_CONNECT_CMD.strip())
+                self._ctx.resource.write(connect_cmd)
             except Exception:
                 pass  # the first real command reports a dead link properly
         if self._probe_identity:
@@ -408,6 +441,14 @@ class ProdigitVisaDriver(BaseDriver):
                     self._write(PRODIGIT_SET_LOAD, state="OFF")
                 except Exception:
                     pass  # unreachable instrument — nothing more we can do here
+                # A USB link put the 3300G in REMOTE (front panel locked); hand
+                # the panel back to the operator.
+                release = PRODIGIT_SERIAL_RELEASE_CMD.strip()
+                if release and _is_serial(self._ctx.resource_name) and _connect_command(self._ctx.resource_name):
+                    try:
+                        self._ctx.resource.write(release)
+                    except Exception:
+                        pass
             self._ctx.resource.close()
             # Close the ResourceManager too. `connect` builds one per call, so
             # without this each connect leaked one, keeping pyvisa-py state

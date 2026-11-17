@@ -87,12 +87,20 @@ PRODIGIT_SCAN_TIMEOUT_MS: str = get_str("PRODIGIT_SCAN_TIMEOUT_MS", "1500")
 PRODIGIT_VISA_READ_TERM: str = get_str("PRODIGIT_VISA_READ_TERM", "\r\n")
 PRODIGIT_VISA_WRITE_TERM: str = get_str("PRODIGIT_VISA_WRITE_TERM", "\r\n")
 # USB that shows up as a COM port (`ASRL<n>::INSTR`, or `COM<n>` in Connections):
-# its baud rate. Not yet verified on the station (2026-10-29) - match the
-# 3300G's front-panel setting.
-PRODIGIT_SERIAL_BAUD: str = get_str("PRODIGIT_SERIAL_BAUD", "9600")
-# Written once after each connect, e.g. "REMOTE" (the 3300G manual asks for it
-# over USB/LAN). Empty = nothing; LAN works without it.
+# its baud rate. 115200 is what the 3300G manual gives for USB (Appendix B);
+# not yet verified on the station.
+PRODIGIT_SERIAL_BAUD: str = get_str("PRODIGIT_SERIAL_BAUD", "115200")
+# Flow control on a COM-port link: "rtscts" (hardware, per the 3300G manual's
+# USB appendix), "xonxoff" or "none".
+PRODIGIT_SERIAL_FLOW: str = get_str("PRODIGIT_SERIAL_FLOW", "rtscts")
+# Written once after each connect, on any link. Empty = nothing; LAN works
+# without it (station, 2026-10-29).
 PRODIGIT_CONNECT_CMD: str = get_str("PRODIGIT_CONNECT_CMD", "")
+# On a COM-port (USB) link only, when PRODIGIT_CONNECT_CMD is empty: sent after
+# connecting, and its counterpart before closing so the front panel returns to
+# local control. The 3300G manual asks for REMOTE over USB.
+PRODIGIT_SERIAL_CONNECT_CMD: str = get_str("PRODIGIT_SERIAL_CONNECT_CMD", "REMOTE")
+PRODIGIT_SERIAL_RELEASE_CMD: str = get_str("PRODIGIT_SERIAL_RELEASE_CMD", "LOCAL")
 PRODIGIT_QUERY_ID: str = get_str("PRODIGIT_QUERY_ID", "*IDN?")
 PRODIGIT_QUERY_INPUT_VOLT: str = get_str("PRODIGIT_QUERY_INPUT_VOLT", "MEAS:VOLT?")
 PRODIGIT_QUERY_POLARITY: str = get_str("PRODIGIT_QUERY_POLARITY", "MEAS:VOLT?")
