@@ -39,7 +39,7 @@ def mutex_name() -> str:
     import hashlib
 
     key = str(user_data_path()).lower().encode("utf-8")
-    return "Local\\DFX_xml_transfer_" + hashlib.sha1(key).hexdigest()[:12]
+    return "Local\\EM5406_xml_transfer_" + hashlib.sha1(key).hexdigest()[:12]
 
 
 def _log_line(message: str) -> None:
@@ -56,11 +56,11 @@ def _log_line(message: str) -> None:
 
 
 def _cycle_seconds() -> float:
-    """60 s (customer requirement). DFX_XML_CYCLE_SECONDS overrides it for automated tests only."""
+    """60 s (customer requirement). EM5406_XML_CYCLE_SECONDS overrides it for automated tests only."""
     from logic.xml_transfer import CYCLE_SECONDS
 
     try:
-        return max(1.0, float(os.environ.get("DFX_XML_CYCLE_SECONDS", CYCLE_SECONDS)))
+        return max(1.0, float(os.environ.get("EM5406_XML_CYCLE_SECONDS", CYCLE_SECONDS)))
     except ValueError:
         return float(CYCLE_SECONDS)
 

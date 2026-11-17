@@ -31,7 +31,7 @@ DEFAULT_ADMIN_PASSWORD: str = get_required_str("DEFAULT_ADMIN_PASSWORD")
 DEFAULT_ADMIN_EMPLOYEE_ID: str = get_str("DEFAULT_ADMIN_EMPLOYEE_ID", "0000")
 
 # --- Station / report identity ---
-TESTER_SERIAL_NUMBER: str = get_str("TESTER_SERIAL_NUMBER", "ATE-DFX-001")
+TESTER_SERIAL_NUMBER: str = get_str("TESTER_SERIAL_NUMBER", "ATE-001")
 INPUT_CONNECTED_TARGET_V: str = get_str("INPUT_CONNECTED_TARGET_V", "24")
 INPUT_CONNECTED_TOLERANCE_PCT: str = get_str("INPUT_CONNECTED_TOLERANCE_PCT", "5")
 # Fallback load resistance per band, used only when a partial run reaches a

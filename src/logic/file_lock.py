@@ -11,7 +11,7 @@ class AlreadyRunningError(RuntimeError):
 
 
 _ERROR_ALREADY_EXISTS = 183
-_MUTEX_NAME = "Local\\DFX_ate_singleton"  # session-scoped (Local\ not Global\)
+_MUTEX_NAME = "Local\\EM5406_tester_singleton"  # session-scoped (Local\ not Global\)
 
 
 class SingleInstanceLock:

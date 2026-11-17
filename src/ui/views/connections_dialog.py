@@ -232,7 +232,7 @@ class ConnectionsDialog(QDialog):
         if not text:
             return ""
         folder = Path(text)
-        probe = folder / f".dfx_write_test_{uuid.uuid4().hex}"
+        probe = folder / f".mes_write_test_{uuid.uuid4().hex}"
         try:
             folder.mkdir(parents=True, exist_ok=True)
             probe.write_text("ok", encoding="utf-8")

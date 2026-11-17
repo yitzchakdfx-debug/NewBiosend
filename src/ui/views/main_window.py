@@ -1107,7 +1107,7 @@ class MainWindow(QMainWindow):
         try:
             tmp_dir = user_tmp_path()
             tmp_dir.mkdir(parents=True, exist_ok=True)
-            path = tmp_dir / f"dfx_op_{uuid.uuid4().hex}.tst"
+            path = tmp_dir / f"test_op_{uuid.uuid4().hex}.tst"
             path.write_text(content, encoding="utf-8")
         except OSError as exc:
             QMessageBox.critical(self, "Test", f"Could not create temp file:\n{exc}")

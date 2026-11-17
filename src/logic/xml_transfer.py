@@ -164,8 +164,8 @@ def check_access(folder: Path | None) -> tuple[bool, str]:
     """
     if folder is None:
         return False, "No MES folder is set (Connections > Instrument Setup)."
-    probe = Path(folder) / f".dfx_mes_check_{uuid.uuid4().hex}.tmp"
-    token = f"DFX MES access check {uuid.uuid4().hex}".encode("ascii")
+    probe = Path(folder) / f".mes_check_{uuid.uuid4().hex}.tmp"
+    token = f"MES access check {uuid.uuid4().hex}".encode("ascii")
     try:
         if not Path(folder).is_dir():
             return False, f"MES folder not reachable: {folder}"
@@ -354,14 +354,14 @@ def start_service() -> bool:
     Backup for the Task Scheduler entry: the GUI calls this at startup and when
     it sees the service has stopped. A second copy exits at once (mutex), so a
     start while one is already running is harmless.
-    DFX_XML_SERVICE_AUTOSTART=0 turns this off (automated tests).
+    EM5406_XML_SERVICE_AUTOSTART=0 turns this off (automated tests).
     """
     import subprocess
     import sys
 
     from paths import is_frozen
 
-    if os.environ.get("DFX_XML_SERVICE_AUTOSTART", "1").strip() == "0":
+    if os.environ.get("EM5406_XML_SERVICE_AUTOSTART", "1").strip() == "0":
         return False
     if service_running():
         return False

@@ -15,7 +15,7 @@
   that is not a placeholder is copied through verbatim.
 
   type="PS_Test" identifies the report kind to the customer's MES (requested
-  2026-11-02); DFX_Tester_Report.xsd requires it.
+  2026-11-02); EM5406_Tester_Report.xsd requires it.
 -->
 <TestReport type="PS_Test">
     <Information>

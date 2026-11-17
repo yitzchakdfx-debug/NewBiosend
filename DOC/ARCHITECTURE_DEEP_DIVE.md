@@ -438,7 +438,7 @@ try/except at every call site so audit failures never break the flow.
 ### 6.5 Single-instance protection
 
 `main.py` acquires `SingleInstanceLock` on startup. **On Windows** the lock is
-a named mutex (`CreateMutexW(None, False, "Local\\DFX_ate_singleton")`); the OS
+a named mutex (`CreateMutexW(None, False, "Local\\EM5406_tester_singleton")`); the OS
 releases it automatically when the process dies, so there is no stale-lock
 problem and no liveness probe needed. If `GetLastError() == ERROR_ALREADY_EXISTS`
 (183) a second instance raises `AlreadyRunningError`. **On POSIX** the original

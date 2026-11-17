@@ -375,6 +375,18 @@ Results > "Export to CSV" / "Export to PDF" were removed (2026-11-17): they
 only re-saved the last run's report, and every unit already gets its PDF and
 XML automatically. `ReportGenerator.generate_csv_file` remains, unused by the UI.
 
+Internal names follow the product too: mutexes `Local\EM5406_tester_singleton`
+and `Local\EM5406_xml_transfer_<hash>`, test variables `EM5406_XML_*`, the
+default `TESTER_SERIAL_NUMBER` "ATE-001". The encrypted-log salt changed
+(`secure_logger._SALT`). `migrate_legacy_logs` runs once at GUI start, before
+anything is logged (the GUI is the only writer, single instance): every
+`sys_*.dat` line that only the earlier salt opens is re-encrypted, the original
+file is copied to `logs/legacy_backup/`, the file is replaced atomically, and
+`logs/.log_key_v2` marks it done. The readers (`read_day`, `read_file`,
+`read_all`) also accept earlier-salt lines, so a `.dat` copied from a station
+that was not updated still opens. Tested on the station's logs: 8611 lines
+converted in 1 s, content identical, a second start converts nothing.
+
 ## No silent demo-mode fallback
 
 A failed `connect()` used to swap the driver for `MockHardware` and carry on.
@@ -1003,7 +1015,7 @@ the GUI**, with the GUI monitoring it.
   (`src/xml_service.py`, windowless). The service is started at logon by Task
   Scheduler (`install/install_xml_service_task.cmd`); the GUI also starts it
   (`xml_transfer.start_service`) before login and whenever it sees it stopped.
-  One copy per installation folder (mutex `Local\DFX_xml_transfer_<hash of the data folder>`).
+  One copy per installation folder (mutex `Local\EM5406_xml_transfer_<hash of the data folder>`).
 - **Folders.** A finished report's XML is written to the unit folder as before
   and a copy is queued in `data/results/XML/Pending` (always local). The service
   copies each pending file to the MES folder (Connections > "MES folder (XML
@@ -1202,4 +1214,4 @@ skipping teardown does not leak it.
 - **How to add a real hardware driver?** Subclass `BaseDriver`, implement `connect/disconnect/execute_command/measurement_commands`; pass instance to `TestRunnerThread(driver=...)`
 - **How to add a new .env key?** Add to `config.py` via `env.get_str/bool/list`, add to `DOC/.env.example`
 - **Password hashing algo?** PBKDF2-HMAC-SHA256, 200k iterations, 16-byte salt, stored as BLOB
-- **Single instance enforcement?** Named Windows mutex `Local\DFX_ate_singleton` via `ctypes`
+- **Single instance enforcement?** Named Windows mutex `Local\EM5406_tester_singleton` via `ctypes`

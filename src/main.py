@@ -68,7 +68,7 @@ def _install_error_log() -> None:
 def main() -> int:
     _install_error_log()
     try:
-        myappid = 'mycompany.dfxtester.ate.v1'
+        myappid = 'em5406.loadtester.ate.v1'
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
     except Exception as e:
         print(f"Note: Could not set AppUserModelID: {e}")
@@ -98,6 +98,17 @@ def _run(app: QApplication) -> int:
     # Deferred so a configuration error can be shown rather than killing a
     # windowless EXE in silence. `config` validates `.env` on import.
     try:
+        from config import LOG_ENCRYPTION_PASSWORD
+        from logic.secure_logger import migrate_legacy_logs
+
+        # Before anything is logged: logs written with the earlier key are
+        # re-encrypted once (backup kept). A failure never blocks the start;
+        # the log readers still open old-key lines.
+        try:
+            migrate_legacy_logs(user_data_path("logs"), LOG_ENCRYPTION_PASSWORD)
+        except Exception as exc:
+            print(f"Log key migration skipped: {exc}")
+
         from logic.report_templates import ensure_templates_seeded
         from ui.views.login_dialog import LoginDialog
         from ui.views.main_window import MainWindow
