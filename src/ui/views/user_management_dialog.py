@@ -208,6 +208,10 @@ class UserManagementDialog(QDialog):
             self._table.setItem(r, 0, QTableWidgetItem(str(user["username"])))
             self._table.setItem(r, 1, QTableWidgetItem(role_label(str(user["role"]))))
             self._table.setItem(r, 2, QTableWidgetItem(str(user.get("employee_id", ""))))
+        # Fit the columns to their text: the default width cut "Technician
+        # (Operator)" to "Technician ...".
+        self._table.resizeColumnsToContents()
+        self._table.horizontalHeader().setStretchLastSection(True)
 
     def _audit(self, action: str, details: str) -> None:
         """Record a user-management change (who did it is the logged-in Admin)."""
